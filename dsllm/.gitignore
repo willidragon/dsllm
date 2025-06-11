@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+data/*/
+
+# Ignore Python cache and compiled files in data/
+data/__pycache__/
+
+downloaded_models/
+outputs/
+dataset/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
