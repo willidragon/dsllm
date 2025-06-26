@@ -35,9 +35,16 @@ fi
 
 OUTPUT_FILE_NAME=${3:-"eval_capture24_${DATA_TAG}.json"}
 
-DATA_PATH="../data/stage_2/${DATA_TAG}/test/capture24_test_data_stage2_${DATA_TAG}.pkl"
-QA_PATH="../data/stage_2/${DATA_TAG}/test/capture24_test_qa_stage2_cls.json"
-PT_ENCODER_BACKBONE_CKPT="../capture24_imp/chronos/chronos-t5-large"  # Update if needed
+# Determine data directory (stage_2 or stage_2_upsampled)
+if [[ "$DATA_TAG" == *upsampled* ]]; then
+  DATA_DIR="../data/stage_2_upsampled"
+else
+  DATA_DIR="../data/stage_2"
+fi
+
+DATA_PATH="$DATA_DIR/${DATA_TAG}/test/capture24_test_data_stage2_${DATA_TAG}.pkl"
+QA_PATH="$DATA_DIR/${DATA_TAG}/test/capture24_test_qa_stage2_cls.json"
+PT_ENCODER_BACKBONE_CKPT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/downloaded_models/chronos/chronos-t5-large"  # Updated to correct path
 
 # Clear the evaluation folder before running evaluation
 # echo "Clearing evaluation folder: $MODEL_DIR/evaluation"

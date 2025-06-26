@@ -377,7 +377,7 @@ for rate in downsample_factors:
                 test_segments.append(seg)
                 test_labels.append(lab)
     output_tag = f"{window_size_seconds}seconds_{rate}DS"
-    output_path = os.path.join(base_output_dir, "stage_2_compare", output_tag)
+    output_path = os.path.join(base_output_dir, "stage_2_compare_buffer", output_tag)
     os.makedirs(os.path.join(output_path, 'train'), exist_ok=True)
     os.makedirs(os.path.join(output_path, 'test'), exist_ok=True)
     # Save train segments/labels
@@ -445,5 +445,5 @@ print("\nData saved successfully for all downsampling rates!")
 if __name__ == "__main__":
     if "--print-output-dir" in sys.argv:
         output_tag = f"{window_size_seconds}seconds_{rate}DS"
-        output_path = os.path.join(base_output_dir, "stage_2_compare", output_tag)
+        output_path = os.path.join(base_output_dir, "stage_2_compare_buffer", output_tag)
         print(output_path)

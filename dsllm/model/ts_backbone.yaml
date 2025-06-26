@@ -22,7 +22,7 @@ capture24:
     9: mixed-activity
   num_labels: 10
   channel_num: 3
-  sample_rate: 1.0101010101010102
+  sample_rate: 0.25
   default_x_acc_start_token: <x_acc_start>
   default_x_acc_end_token: <x_acc_end>
   default_y_acc_start_token: <y_acc_start>

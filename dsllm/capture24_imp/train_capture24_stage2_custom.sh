@@ -16,10 +16,10 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINETUNE_NAME=${1:-capture24_stage2_${OUTPUT_TAG}_${TIMESTAMP}}
 
 # Set paths
-DATA_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_compare"
+DATA_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_compare_buffer"
 MODEL_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/downloaded_models/llama_3_2_1b_instruct_cache"
 CHRONOS_PATH="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/downloaded_models/chronos/chronos-t5-large"
-OUTPUT_BASE="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/outputs"
+OUTPUT_BASE="/project/cc-20250120231604/ssd/users/kwsu/data/trained_model"
 
 # Set up Python environment
 export PYTHONPATH="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm:${PYTHONPATH}"
@@ -93,8 +93,8 @@ torchrun --nproc_per_node=2 --master_port=$master_port ../train/train_mem.py   \
 --save_strategy 'steps'    \
 --do_train True    \
 --do_eval True    \
---save_steps 50    \
---eval_steps 50    \
+--save_steps 200    \
+--eval_steps 200    \
 --save_total_limit 1    \
 --load_best_model_at_end True    \
 --metric_for_best_model f1_macro    \

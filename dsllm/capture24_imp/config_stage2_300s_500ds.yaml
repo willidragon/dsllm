@@ -1,7 +1,7 @@
 # Original data sampling rate in Hz (samples per second)
 original_sampling_rate: 100
 # 200 for 1 sample per 2 seconds, 100 for 1Hz, 50 for 2Hz, etc.
-downsample_factor: 100
+downsample_factor: 500
 # Length of each window in seconds (used for segmenting the data)
 window_size_seconds: 300
 # Ratio for balancing the dataset. 1.0 = perfect balance, <1.0 = more aggressive capping

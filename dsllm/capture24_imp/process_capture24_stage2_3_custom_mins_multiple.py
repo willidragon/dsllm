@@ -66,14 +66,20 @@ def save_qa_data(qa_dict, path, filename):
         print(f"Backup saved successfully to: {backup_path}")
 
 def process_rate(rate):
-    """Process one downsampling rate and generate QA pairs for both train and test splits"""
+    """
+    Process one downsampling rate and generate QA pairs for both train and test splits
+    
+    Note: Fixed data quality check to handle sleep data where one channel becomes zero due to 
+    downsampling (e.g., x-axis during minimal movement periods). Only skips data with 2+ 
+    all-zero channels or completely zero data to prevent data/QA count mismatches.
+    """
     print(f"\n{'='*80}")
     print(f"Processing downsampling rate: {rate}")
     print(f"{'='*80}")
     
     # Set up paths for this rate
     output_tag = f"{window_size_seconds}seconds_{rate}DS"
-    base_output_path = os.path.join(base_output_dir, "stage_2_compare", output_tag)
+    base_output_path = os.path.join(base_output_dir, "stage_2_compare_buffer", output_tag)
     
     # Calculate window size for this rate
     sampling_rate = original_sampling_rate / rate
@@ -123,11 +129,27 @@ def process_rate(rate):
                     assert d.shape[0] == window_size  # Use window_size variable for assertion
                     assert d.shape[1] == 3  # Capture24 has 3 channels (x, y, z)
                     
-                    # Check for NaN or zero values in the data
-                    if np.any(np.isnan(d)) or np.all(d == 0, axis=0).any():
-                        print(f"\nWarning: Segment {idx} contains NaN or all-zero channel")
+                    # Check for NaN or invalid data
+                    if np.any(np.isnan(d)):
+                        print(f"\nWarning: Segment {idx} contains NaN values")
                         error_count += 1
                         continue
+                    
+                    # More sophisticated check for problematic data:
+                    # Only skip if ALL data is zero or if 2+ channels are all zero
+                    # This allows valid sleep data where one channel (e.g., x-axis) becomes zero due to downsampling
+                    num_all_zero_channels = np.sum(np.all(d == 0, axis=0))
+                    if np.all(d == 0) or num_all_zero_channels >= 2:
+                        print(f"\nWarning: Segment {idx} has {num_all_zero_channels} all-zero channels or all data is zero")
+                        error_count += 1
+                        continue
+                    
+                    # Log single all-zero channels for monitoring (but don't skip)
+                    if num_all_zero_channels == 1:
+                        zero_channels = [i for i, is_zero in enumerate(np.all(d == 0, axis=0)) if is_zero]
+                        channel_names = ['x-axis', 'y-axis', 'z-axis']
+                        if idx < 20 or idx % 1000 == 0:  # Only log occasionally to avoid spam
+                            print(f"\nInfo: Segment {idx} has all-zero {channel_names[zero_channels[0]]} (acceptable for sleep data)")
                     
                     # --- Deterministic randomization per window ---
                     window_id = l.get('window_id', idx)  # fallback to idx if not present

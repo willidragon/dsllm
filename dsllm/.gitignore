@@ -11,3 +11,13 @@ dataset/
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+
+*.log
+logs/
+*.log.*
+*.pth
+*.pth.*
+
+*.png
+
+dsllm/teacherstudent/evaluation/

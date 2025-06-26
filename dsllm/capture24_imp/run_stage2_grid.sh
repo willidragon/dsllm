@@ -6,7 +6,11 @@ CONFIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="$CONFIG_DIR/run_all_stage2_custom_min.sh"
 
 CONFIGS=(
-    config_stage2_300s_100ds.yaml
+    # config_stage2_300s_100ds.yaml
+    config_stage2_300s_200ds.yaml
+    config_stage2_300s_300ds.yaml
+    config_stage2_300s_400ds.yaml
+    # config_stage2_300s_500ds.yaml
 )
 
 for CFG in "${CONFIGS[@]}"; do
