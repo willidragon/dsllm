@@ -1,0 +1,16 @@
+# Original data sampling rate in Hz (samples per second)
+original_sampling_rate: 100
+# 200 for 1 sample per 2 seconds, 100 for 1Hz, 50 for 2Hz, etc.
+downsample_factor: 1000
+# Length of each window in seconds (used for segmenting the data)
+window_size_seconds: 300
+# Ratio for balancing the dataset. 1.0 = perfect balance, <1.0 = more aggressive capping
+balance_ratio: 0.05
+# Minimum fraction of a window that must be filled by a single label to keep the window (e.g., 0.5 = at least 50%)
+min_label_fraction: 0.5
+# Number of participants to use in the dataset
+num_participants: 151
+# Percentage of participants to use for training (rest for testing), e.g., 80 = 80% train, 20% test
+train_test_split: 80
+# Directory containing the participant CSV files
+data_dir: /home/willidragon/william-research/datasets/capture24 

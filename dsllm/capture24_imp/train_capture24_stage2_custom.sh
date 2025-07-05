@@ -16,7 +16,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINETUNE_NAME=${1:-capture24_stage2_${OUTPUT_TAG}_${TIMESTAMP}}
 
 # Set paths
-DATA_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_compare_buffer"
+DATA_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_upsampled_saits/300seconds_100DS_upsampled_from_1000DS"
 MODEL_ROOT="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/downloaded_models/llama_3_2_1b_instruct_cache"
 CHRONOS_PATH="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/downloaded_models/chronos/chronos-t5-large"
 OUTPUT_BASE="/project/cc-20250120231604/ssd/users/kwsu/data/trained_model"
@@ -78,10 +78,10 @@ torchrun --nproc_per_node=2 --master_port=$master_port ../train/train_mem.py   \
 --use_weighted_loss True  \
 --tokenize_method 'StanNormalizeUniformBins'    \
 --dataset "capture24" \
---data_path "${DATA_ROOT}/${OUTPUT_TAG}/train/capture24_train_data_stage2_${OUTPUT_TAG}.pkl"    \
---qa_path "${DATA_ROOT}/${OUTPUT_TAG}/train/capture24_train_qa_stage2_cls.json"     \
---eval_data_path "${DATA_ROOT}/${OUTPUT_TAG}/test/capture24_test_data_stage2_${OUTPUT_TAG}.pkl"   \
---eval_qa_path "${DATA_ROOT}/${OUTPUT_TAG}/test/capture24_test_qa_stage2_cls.json"    \
+--data_path "${DATA_ROOT}/train/capture24_train_data_stage2_300seconds_100DS_upsampled.pkl"    \
+--qa_path "${DATA_ROOT}/train/capture24_train_qa_stage2_cls.json"     \
+--eval_data_path "${DATA_ROOT}/val/capture24_val_data_stage2_300seconds_100DS_upsampled.pkl"   \
+--eval_qa_path "${DATA_ROOT}/val/capture24_val_qa_stage2_cls.json"    \
 --preprocess_type "smry+trend+corr+Q" \
 --output_dir "${OUTPUT_DIR}"    \
 --model_max_length 4096    \

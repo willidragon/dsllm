@@ -9,6 +9,7 @@ from statsmodels.tsa.stattools import acf
 import json
 import re
 import yaml
+import warnings
 
 def get_prompt_dict(window_size_seconds):
     return {
@@ -243,9 +244,13 @@ def calculate_total_time(df):
     """
     Calculate the total duration for each trend in the dataframe.
     """
+    # Show the warning a few times, then silence it
+    warnings.filterwarnings('once', category=FutureWarning, module='pandas.core.groupby')
     total_time_by_trend = df.groupby('trend').apply(
         lambda x: round((x['end_time'] - x['start_time']).sum(), 2)).reset_index(
         name='total_time')
+    # After a few warnings, ignore them
+    warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.groupby')
     return total_time_by_trend
 
 def format_float_2_int(num):

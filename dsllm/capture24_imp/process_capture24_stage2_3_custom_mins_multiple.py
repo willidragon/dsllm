@@ -85,7 +85,7 @@ def process_rate(rate):
     sampling_rate = original_sampling_rate / rate
     window_size = int(window_size_seconds * sampling_rate)
     
-    for split in ["train", "test"]:
+    for split in ["train", "val", "test"]:
         output_path = os.path.join(base_output_path, split)
         data_file = os.path.join(output_path, f"capture24_{split}_data_stage2_{output_tag}.pkl")
         labels_file = os.path.join(output_path, f"capture24_{split}_labels_stage2_{output_tag}.pkl")

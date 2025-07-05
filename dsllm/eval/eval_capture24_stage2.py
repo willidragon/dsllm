@@ -187,7 +187,10 @@ def main():
         "confusion_matrix": conf_matrix.tolist(),
         "results": results
     }
-    output_dir = os.path.join(args.model_name_or_path, "evaluation")
+    if "_upsampled" in args.output_file_name:
+        output_dir = os.path.join(args.model_name_or_path, "evaluation_upsampled")
+    else:
+        output_dir = os.path.join(args.model_name_or_path, "evaluation")
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, args.output_file_name), "w") as f:
         json.dump(output, f, indent=2)

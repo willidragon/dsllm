@@ -1,0 +1,27 @@
+%
+% this file is encoded in utf-8
+% v2.02 (Sep. 12, 2012)
+
+% #### front_pages 前頁 ####
+% - ncku_frontpages.tex 此檔只提供整體架構的定義，不需更動
+% - 包括封面、書名頁、中文摘要、英文摘要、誌謝、目錄、表目錄、圖目錄、符號說明
+\input{ncku_frontpages.tex} 
+
+%\input{texFolder/abstract}
+\input{texFolder/introduction}
+\input{texFolder/relatedWork}
+\input{texFolder/preliminaries}
+\input{texFolder/method}
+\input{texFolder/exp}
+\input{texFolder/conclusions}
+%\bibliographystyle{IEEEtran}  % 使用 IEEE Trans 期刊格式
+%\bibliography{texFolder/reference}
+
+% back pages 後頁
+% 包括參考文獻、附錄、自傳
+% 實際內容由
+%    my_bib.bib, my_appendix.tex, my_vita.tex
+% 決定
+% yzu_backpages.tex 此檔只提供整體架構的定義，不需更動
+% 在撰寫各章草稿時，可以把此部份「關掉」，以節省無謂的編譯時間。
+% \input{ncku_backpages.tex}

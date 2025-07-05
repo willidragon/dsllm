@@ -1,0 +1,329 @@
+\chapter{Methodology}
+
+\hspace{2em}In this chapter, we present our novel two-stage methodology for enhancing Large Language Model-based Human Activity Recognition (HAR) performance on coarse-grained wearable sensor data. Our approach addresses the fundamental challenge of maintaining recognition accuracy while operating under severe resource constraints typical of wearable devices. The methodology consists of two interconnected stages: (1) \textbf{Teacher-Student Data Enhancement} that learns to upsample low-resolution sensor data to high-resolution quality, and (2) \textbf{SensorLLM Training} on the enhanced data for improved HAR performance.
+
+\begin{figure}
+    \centering
+    % \includegraphics[width=1\linewidth]{figs/methodology_overview.png}
+    \caption{Overview of the proposed two-stage methodology for coarse-grained sensor HAR}
+    \label{fig:methodology-overview}
+\end{figure}
+
+\section{Stage 1: Teacher-Student Data Enhancement}
+
+\hspace{2em}The first stage of our methodology employs a teacher-student learning framework to address the fundamental challenge of limited sensor data quality in resource-constrained environments. This stage learns to enhance coarse-grained, low-resolution sensor data to high-resolution equivalent quality, enabling subsequent stages to operate with richer temporal information despite the original data constraints.
+
+\subsection{Problem Formulation}
+
+\hspace{2em}Given a dataset of sensor readings collected at different sampling rates, we define high-resolution data $\mathbf{X}^h \in \mathbb{R}^{N \times T_h \times d}$ and low-resolution data $\mathbf{X}^l \in \mathbb{R}^{N \times T_l \times d}$, where $N$ is the number of samples, $T_h$ and $T_l$ are the temporal dimensions with $T_h \gg T_l$, and $d$ is the feature dimension (typically 3 for tri-axial accelerometer data). The downsampling relationship is defined by a factor $r = T_h / T_l$, where $r$ represents the temporal resolution reduction.
+
+\hspace{2em}The enhancement task aims to learn a mapping function $f: \mathbb{R}^{T_l \times d} \rightarrow \mathbb{R}^{T_h \times d}$ that can reconstruct high-resolution sensor data from low-resolution input while preserving the essential temporal patterns and activity-relevant features.
+
+\subsection{Teacher-Student Architecture}
+
+\hspace{2em}Our enhancement framework consists of four key components: a Teacher Encoder, Teacher Decoder, Student Encoder, and Student Decoder, designed to facilitate knowledge transfer from high-resolution to low-resolution domains.
+
+\subsubsection{Teacher Network}
+
+\hspace{2em}The teacher network operates on high-resolution sensor data and serves as the source of rich temporal knowledge. The teacher encoder $E_T$ employs a convolutional-LSTM architecture for temporal feature extraction:
+
+\begin{equation}
+\mathbf{z}_T = E_T(\mathbf{X}^h; \theta_T^e)
+\end{equation}
+
+where $\theta_T^e$ represents the teacher encoder parameters. The encoder architecture consists of:
+
+\begin{itemize}
+    \item \textbf{Convolutional Layers}: Three 1D convolutional layers with kernel sizes [7, 5, 3], filters [64, 128, 256], and batch normalization with ReLU activation
+    \item \textbf{Bidirectional LSTM}: Two-layer bidirectional LSTM with hidden dimension 256, dropout 0.1 for temporal modeling
+    \item \textbf{Feature Projection}: Linear layer mapping to final hidden dimension (512 for teacher)
+\end{itemize}
+
+The teacher decoder $D_T$ reconstructs the high-resolution data using progressive upsampling:
+
+\begin{equation}
+\hat{\mathbf{X}}^h = D_T(\mathbf{z}_T; \theta_T^d)
+\end{equation}
+
+\subsubsection{Student Network}
+
+\hspace{2em}The student network operates on low-resolution input and learns to generate high-resolution output through knowledge distillation from the teacher. The student encoder $E_S$ follows the same architectural pattern but with reduced hidden dimensions (256):
+
+\begin{equation}
+\mathbf{z}_S = E_S(\mathbf{X}^l; \theta_S^e)
+\end{equation}
+
+The student decoder $D_S$ employs progressive upsampling with residual connections to generate enhanced high-resolution data:
+
+\begin{equation}
+\hat{\mathbf{X}}^{enhanced} = D_S(\mathbf{z}_S; \theta_S^d)
+\end{equation}
+
+The decoder architecture includes:
+
+\begin{itemize}
+    \item \textbf{Feature Expansion}: Linear layer expanding encoded features to initial sequence representation
+    \item \textbf{Progressive Upsampling}: Multiple ConvTranspose1D layers with 2x upsampling at each stage
+    \item \textbf{Residual Connections}: Skip connections between upsampling stages for gradient flow
+    \item \textbf{Smoothing Layers}: Additional 1D convolutions for temporal smoothing after each upsampling step
+\end{itemize}
+
+\subsubsection{Feature Projector}
+
+\hspace{2em}To enable effective knowledge transfer between teacher and student networks operating in different resolution domains, we introduce a feature projector $P$ that aligns the feature representations:
+
+\begin{equation}
+\mathbf{z}_S^{proj} = P(\mathbf{z}_S; \theta_P)
+\end{equation}
+
+This ensures that student features can be effectively compared with teacher features for knowledge distillation.
+
+\subsection{Enhancement Loss Functions}
+
+\hspace{2em}The training of our teacher-student enhancement model employs a multi-component loss function designed to optimize both reconstruction quality and temporal coherence.
+
+\subsubsection{Reconstruction Loss}
+
+\hspace{2em}The primary reconstruction loss ensures that the enhanced data closely matches the target high-resolution data:
+
+\begin{equation}
+\mathcal{L}_{recon} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{enhanced}_i\|_2^2
+\end{equation}
+
+\subsubsection{Feature Matching Loss}
+
+\hspace{2em}The feature matching loss facilitates knowledge transfer by aligning student and teacher feature representations:
+
+\begin{equation}
+\mathcal{L}_{feature} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{z}_{T,i} - \mathbf{z}_{S,i}^{proj}\|_2^2
+\end{equation}
+
+\subsubsection{Temporal Smoothness Loss}
+
+\hspace{2em}To ensure temporal coherence in the enhanced data, we apply a smoothness constraint:
+
+\begin{equation}
+\mathcal{L}_{smooth} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t=1}^{T_h-1} \|\hat{\mathbf{X}}^{enhanced}_{i,t+1} - \hat{\mathbf{X}}^{enhanced}_{i,t}\|_2^2
+\end{equation}
+
+\subsubsection{Frequency Domain Loss}
+
+\hspace{2em}To preserve important frequency characteristics, we incorporate a frequency domain loss using the Fourier transform:
+
+\begin{equation}
+\mathcal{L}_{freq} = \frac{1}{N} \sum_{i=1}^{N} \|\mathcal{F}(\mathbf{X}^h_i) - \mathcal{F}(\hat{\mathbf{X}}^{enhanced}_i)\|_2^2
+\end{equation}
+
+where $\mathcal{F}$ denotes the Fourier transform operation.
+
+\subsubsection{Combined Loss Function}
+
+\hspace{2em}The total enhancement loss combines all components with appropriate weights:
+
+\begin{equation}
+\mathcal{L}_{enhancement} = \lambda_1 \mathcal{L}_{recon} + \lambda_2 \mathcal{L}_{feature} + \lambda_3 \mathcal{L}_{smooth} + \lambda_4 \mathcal{L}_{freq}
+\end{equation}
+
+where $\lambda_1, \lambda_2, \lambda_3, \lambda_4$ are hyperparameters controlling the relative importance of each loss component.
+
+\subsection{Training Procedure}
+
+\hspace{2em}The training of our enhancement model follows a two-phase approach:
+
+\textbf{Phase 1: Teacher Training} - The teacher network is trained exclusively on high-resolution data using reconstruction loss to learn optimal feature representations.
+
+\textbf{Phase 2: Student Training} - The student network is trained using the combined loss function while the teacher network parameters remain frozen, enabling effective knowledge transfer.
+
+\section{Stage 2: SensorLLM Training on Enhanced Data}
+
+\hspace{2em}The second stage leverages the enhanced sensor data from Stage 1 to train a SensorLLM model for Human Activity Recognition. This stage builds upon the SensorLLM framework \cite{li2024sensorllm} while incorporating our novel data enhancement pipeline.
+
+\subsection{Data Processing Pipeline}
+
+\hspace{2em}The enhanced sensor data undergoes several preprocessing steps to prepare it for SensorLLM training.
+
+\subsubsection{Temporal Segmentation}
+
+\hspace{2em}Enhanced sensor data is segmented into fixed-length windows for activity recognition. Given enhanced data $\hat{\mathbf{X}}^{enhanced}$, we extract overlapping windows:
+
+\begin{equation}
+\mathbf{W}_i = \hat{\mathbf{X}}^{enhanced}[i \cdot s : i \cdot s + w, :]
+\end{equation}
+
+where $w$ is the window size (300 seconds in our implementation), $s$ is the stride, and $i$ indexes the window.
+
+\subsubsection{Label Assignment}
+
+\hspace{2em}For each window, we assign activity labels based on a minimum label fraction criterion. A window is labeled with activity class $c$ if:
+
+\begin{equation}
+\frac{\text{count}(c \text{ in window})}{\text{window length}} \geq \tau
+\end{equation}
+
+where $\tau$ is the minimum label fraction threshold (0.5 in our implementation).
+
+\subsubsection{Data Tokenization}
+
+\hspace{2em}Following the SensorLLM approach, sensor data is converted into discrete tokens suitable for language model processing. We employ the StanNormalizeUniformBins tokenization method:
+
+\begin{equation}
+\text{token}_t = \text{quantize}\left(\frac{\mathbf{x}_t - \mu}{\sigma}, \text{num\_bins}\right)
+\end{equation}
+
+where $\mu$ and $\sigma$ are standardization parameters, and quantize() maps continuous values to discrete bins.
+
+\subsection{Question-Answer Generation}
+
+\hspace{2em}To leverage the natural language capabilities of Large Language Models, we generate question-answer pairs that encode both sensor data and contextual information.
+
+\subsubsection{Statistical Summary Generation}
+
+\hspace{2em}For each sensor window, we compute statistical summaries:
+
+\begin{equation}
+\text{Summary} = \{\mu_x, \sigma_x, \mu_y, \sigma_y, \mu_z, \sigma_z\}
+\end{equation}
+
+where subscripts $x, y, z$ denote the three accelerometer axes.
+
+\subsubsection{Correlation Analysis}
+
+\hspace{2em}Cross-correlation patterns between sensor axes are computed:
+
+\begin{equation}
+\rho_{ij} = \frac{\text{cov}(\mathbf{x}_i, \mathbf{x}_j)}{\sigma_i \sigma_j}
+\end{equation}
+
+These correlations are converted to natural language descriptions (e.g., "strongly positively correlated").
+
+\subsubsection{Trend Analysis}
+
+\hspace{2em}Temporal trends within windows are analyzed using linear regression slopes and converted to descriptive text.
+
+\subsection{SensorLLM Architecture Integration}
+
+\hspace{2em}Our enhanced data is integrated into the SensorLLM architecture, which consists of three main components:
+
+\subsubsection{Time Series Encoder}
+
+\hspace{2em}We utilize the Chronos time series foundation model as the backbone encoder:
+
+\begin{equation}
+\mathbf{h}_{\text{sensor}} = \text{Chronos}(\text{tokens}; \theta_{\text{chronos}})
+\end{equation}
+
+where $\text{tokens}$ represent the tokenized sensor data and $\theta_{\text{chronos}}$ are the pre-trained Chronos parameters.
+
+\subsubsection{Language Model Integration}
+
+\hspace{2em}The sensor embeddings are integrated with the LLaMA-3.2-1B language model:
+
+\begin{equation}
+\mathbf{h}_{\text{combined}} = \text{LLaMA}([\mathbf{h}_{\text{sensor}}; \mathbf{h}_{\text{text}}]; \theta_{\text{llama}})
+\end{equation}
+
+where $\mathbf{h}_{\text{text}}$ represents text embeddings from the question-answer pairs.
+
+\subsubsection{Classification Head}
+
+\hspace{2em}A classification head maps the combined representations to activity classes:
+
+\begin{equation}
+\mathbf{p} = \text{softmax}(\mathbf{W}_{\text{cls}} \mathbf{h}_{\text{combined}} + \mathbf{b}_{\text{cls}})
+\end{equation}
+
+\subsection{Training Configuration}
+
+\hspace{2em}The SensorLLM model is trained using the following configuration optimized for enhanced data:
+
+\begin{itemize}
+    \item \textbf{Loss Function}: Weighted cross-entropy loss to handle class imbalance
+    \item \textbf{Optimization}: AdamW optimizer with cosine learning rate scheduling
+    \item \textbf{Learning Rate}: 2e-3 with 3\% warmup ratio
+    \item \textbf{Batch Size}: 4 per device with gradient accumulation steps of 8
+    \item \textbf{Training Epochs}: 8 epochs with early stopping based on F1-macro score
+    \item \textbf{Model Freezing}: LLM parameters frozen, time series encoder frozen, only classification head trainable
+\end{itemize}
+
+\section{Integration and Evaluation}
+
+\hspace{2em}The integration of our two-stage approach creates a comprehensive pipeline that transforms coarse-grained sensor data into high-quality HAR predictions. The enhanced data from Stage 1 provides the temporal richness necessary for effective Stage 2 training, while the SensorLLM framework in Stage 2 leverages both sensor patterns and contextual understanding for robust activity recognition.
+
+\hspace{2em}This methodology enables HAR systems to achieve high performance even when operating under severe resource constraints, making it particularly suitable for deployment on consumer wearable devices where battery life and computational efficiency are paramount concerns.
+
+\section{Experimental Configuration}
+
+\hspace{2em}Our experimental setup encompasses specific configurations for both stages to ensure reproducible and robust results.
+
+\subsection{Stage 1 Configuration}
+
+\hspace{2em}The teacher-student data enhancement stage operates with the following parameters:
+
+\begin{itemize}
+    \item \textbf{Data Specifications}: 
+    \begin{itemize}
+        \item High-resolution data: 300 timesteps (1Hz sampling, 300 seconds)
+        \item Low-resolution data: 30 timesteps (0.1Hz sampling, 300 seconds) 
+        \item Upsampling factor: 10x (from 30 to 300 timesteps)
+        \item Feature dimension: 3 (tri-axial accelerometer data)
+    \end{itemize}
+    \item \textbf{Model Architecture}:
+    \begin{itemize}
+        \item Teacher hidden dimension: 512
+        \item Student hidden dimension: 256
+        \item Batch size: 16
+        \item Loss weights: $\lambda_1=1.0$, $\lambda_2=0.5$, $\lambda_3=1.0$, $\lambda_4=1.0$
+    \end{itemize}
+    \item \textbf{Training Parameters}:
+    \begin{itemize}
+        \item Teacher training epochs: 30
+        \item Student training epochs: 50
+        \item Learning rate: 1e-3 (both networks)
+        \item Optimizer: Adam
+    \end{itemize}
+\end{itemize}
+
+\subsection{Stage 2 Configuration}
+
+\hspace{2em}The SensorLLM training stage employs the following configuration:
+
+\begin{itemize}
+    \item \textbf{Data Processing}:
+    \begin{itemize}
+        \item Window size: 300 seconds
+        \item Sampling rate: 100Hz (original) downsampled by factors 100DS, 200DS, 500DS, 1000DS
+        \item Minimum label fraction: 0.5
+        \item Data balancing ratio: 0.05
+        \item Stride: 50\% overlap between windows
+    \end{itemize}
+    \item \textbf{Model Configuration}:
+    \begin{itemize}
+        \item Base LLM: LLaMA-3.2-1B Instruct
+        \item Time series encoder: Chronos-T5-Large
+        \item Tokenization: StanNormalizeUniformBins
+        \item Model max length: 4096 tokens
+        \item Number of activity classes: 10 (Capture24 dataset)
+    \end{itemize}
+    \item \textbf{Training Setup}:
+    \begin{itemize}
+        \item Distributed training: 2 GPUs with PyTorch DDP
+        \item Learning rate: 2e-3 with cosine scheduling
+        \item Warmup ratio: 3\%
+        \item Batch size: 4 per device, gradient accumulation: 8
+        \item Training epochs: 8 with early stopping
+        \item Evaluation metric: F1-macro score
+        \item Mixed precision: BF16
+    \end{itemize}
+\end{itemize}
+
+\subsection{Dataset Specifications}
+
+\hspace{2em}Our methodology is evaluated on the Capture24 dataset with the following specifications:
+
+\begin{itemize}
+    \item \textbf{Participants}: 151 participants selected randomly
+    \item \textbf{Train-test split}: 80\% training, 20\% testing
+    \item \textbf{Activity categories}: 10 classes (sleep, sitting, standing, walking, bicycling, vehicle, household-chores, manual-work, sports, mixed-activity)
+    \item \textbf{Data balancing}: Aggressive capping with 0.05 balance ratio to handle class imbalance
+    \item \textbf{Quality control}: Windows with less than 50\% single-label coverage are discarded
+\end{itemize}

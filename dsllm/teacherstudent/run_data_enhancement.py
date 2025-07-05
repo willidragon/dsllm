@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import argparse
+import pandas as pd
 
 # Add the current directory to path
 current_dir = Path(__file__).parent
@@ -39,14 +40,20 @@ def load_paths():
         paths = yaml.safe_load(f)
     return paths
 
-def visualize_enhancement_results(model, num_samples=3):
+def visualize_enhancement_results(model, num_samples=3, output_dir=None):
     """Visualize enhancement results"""
     model.student_encoder.eval()
     model.student_decoder.eval()
     
     # Get some test samples
     test_loader_iter = iter(model.test_loader)
-    low_res_batch, high_res_batch = next(test_loader_iter)
+    batch_data = next(test_loader_iter)
+    
+    # Handle both cases: with and without labels
+    if len(batch_data) == 3:
+        low_res_batch, high_res_batch, _ = batch_data  # Ignore labels for visualization
+    else:
+        low_res_batch, high_res_batch = batch_data
     
     # Select first few samples
     low_res_samples = low_res_batch[:num_samples].to(model.config.device)
@@ -96,14 +103,19 @@ def visualize_enhancement_results(model, num_samples=3):
     
     plt.tight_layout()
     
-    # Save to evaluation folder with timestamp
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    eval_dir = Path(f"evaluation/training_demo_{timestamp}")
-    eval_dir.mkdir(parents=True, exist_ok=True)
-    
-    plt.savefig(eval_dir / 'enhancement_comparison.png', dpi=300, bbox_inches='tight')
-    print(f"📊 Training demo visualization saved to: {eval_dir / 'enhancement_comparison.png'}")
+    # Save to results_dir if provided, else evaluation folder
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plot_path = output_dir / 'enhancement_comparison.png'
+    else:
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        eval_dir = Path(f"evaluation/training_demo_{timestamp}")
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        plot_path = eval_dir / 'enhancement_comparison.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"📊 Training demo visualization saved to: {plot_path}")
     plt.show()
     
     # Calculate and print MSE for each sample
@@ -113,14 +125,20 @@ def visualize_enhancement_results(model, num_samples=3):
         print(f"   Sample {i+1}: {mse:.6f}")
     print(f"   Average MSE: {np.mean(mse_per_sample):.6f}")
 
-def demo_enhancement_pipeline(model, num_samples=5):
+def demo_enhancement_pipeline(model, num_samples=5, output_dir=None):
     """Demonstrate the complete enhancement pipeline"""
     print("\n🚀 Data Enhancement Pipeline Demo")
     print("=" * 50)
     
     # Load some low-res test data
     test_loader_iter = iter(model.test_loader)
-    low_res_batch, high_res_batch = next(test_loader_iter)
+    batch_data = next(test_loader_iter)
+    
+    # Handle both cases: with and without labels
+    if len(batch_data) == 3:
+        low_res_batch, high_res_batch, _ = batch_data  # Ignore labels for demo
+    else:
+        low_res_batch, high_res_batch = batch_data
     
     # Select samples
     low_res_demo = low_res_batch[:num_samples]
@@ -164,7 +182,57 @@ def demo_enhancement_pipeline(model, num_samples=5):
     print(f"   Enhanced data output: {enhanced_data.shape}")
     print(f"   ✅ Shapes match - ready for SensorLLM inference!")
     
+    # Optionally save demo results to output_dir
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Save a summary text file
+        with open(output_dir / 'demo_summary.txt', 'w') as f:
+            f.write(f"Input shape: {low_res_demo.shape}\n")
+            f.write(f"Output shape: {enhanced_data.shape}\n")
+            f.write(f"Target shape: {high_res_demo.shape}\n")
+            f.write(f"MSE: {mse:.6f}\n")
+            f.write(f"RMSE: {np.sqrt(mse):.6f}\n")
+            f.write(f"Temporal Correlation: {avg_correlation:.4f}\n")
     return enhanced_data
+
+def plot_loss_curves(results_dir):
+    """Plot and save teacher and student loss curves from CSV logs."""
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    results_dir = Path(results_dir)
+    # Teacher loss curve
+    teacher_csv = results_dir / 'training_log_teacher.csv'
+    if teacher_csv.exists():
+        df_teacher = pd.read_csv(teacher_csv)
+        plt.figure(figsize=(8,4))
+        plt.plot(df_teacher['epoch'], df_teacher['total_loss'], label='Teacher Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Teacher Loss Curve')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(results_dir / 'teacher_loss_curve.png', dpi=150, bbox_inches='tight')
+        plt.close()
+    # Student loss curve
+    student_csv = results_dir / 'training_log_student.csv'
+    if student_csv.exists():
+        df_student = pd.read_csv(student_csv)
+        plt.figure(figsize=(8,4))
+        plt.plot(df_student['epoch'], df_student['total_loss'], label='Student Total Loss')
+        plt.plot(df_student['epoch'], df_student['recon_loss'], label='Recon Loss', linestyle='--')
+        plt.plot(df_student['epoch'], df_student['feature_loss'], label='Feature Loss', linestyle='--')
+        plt.plot(df_student['epoch'], df_student['smooth_loss'], label='Smooth Loss', linestyle='--')
+        plt.plot(df_student['epoch'], df_student['freq_loss'], label='Freq Loss', linestyle='--')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Student Loss Curve')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(results_dir / 'student_loss_curve.png', dpi=150, bbox_inches='tight')
+        plt.close()
 
 def main():
     parser = argparse.ArgumentParser(description="Data Enhancement Teacher-Student Training")
@@ -188,9 +256,8 @@ def main():
         return
     
     # Set up paths
-    base_path = Path(paths['base_output_dir']) / args.data_subdir
-    high_res_path = str(base_path / f"300seconds_{args.high_ds}DS/train/capture24_train_data_stage2_300seconds_{args.high_ds}DS.pkl")
-    low_res_path = str(base_path / f"300seconds_{args.low_ds}DS/train/capture24_train_data_stage2_300seconds_{args.low_ds}DS.pkl")
+    high_res_path = f"/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_compare_buffer/300seconds_{args.high_ds}DS/train/capture24_train_data_stage2_300seconds_{args.high_ds}DS.pkl"
+    low_res_path = f"/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_compare_buffer/300seconds_{args.low_ds}DS/train/capture24_train_data_stage2_300seconds_{args.low_ds}DS.pkl"
     
     print("📂 Data paths:")
     print(f"   High-res (teacher): {high_res_path}")
@@ -215,7 +282,12 @@ def main():
     # Set output directory as requested
     trained_dir = Path("/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/enhancement_model")
     trained_dir.mkdir(parents=True, exist_ok=True)
-    model_name = trained_dir / f"enhancement_model_{high_to_low_ratio}x.pth"
+    # Compose a descriptive model name
+    enhancement_tags = []
+    enhancement_tags.append(f"{high_to_low_ratio}x")
+    enhancement_tags.append("stftloss")
+    enhancement_tags.append("activityaware")
+    model_name = trained_dir / ("enhancement_model_" + "_".join(enhancement_tags) + ".pth")
     
     # Configuration for data enhancement
     config = DataEnhancementConfig(
@@ -226,9 +298,9 @@ def main():
         feature_dim=sample_high_res.shape[1],  # x, y, z accelerometer
         teacher_hidden_dim=512,
         student_hidden_dim=256,
-        teacher_epochs=15,       # Reduced for faster training
-        student_epochs=30,
-        batch_size=8,           # Smaller batch for memory
+        teacher_epochs=9999,
+        student_epochs=9999,
+        batch_size=64,           # Smaller batch for memory
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
     
@@ -244,28 +316,31 @@ def main():
         model = DataEnhancementTeacherStudentModel(config)
         
         print("🎓 Starting enhancement training...")
-        model.train()
+        results_dir = model.train()
         
-        print("\n📊 Evaluating enhancement quality...")
-        test_mse = model.evaluate_enhancement_quality()
-        
-        # Save the trained model
-        print(f"\n💾 Saving model as {model_name}")
-        torch.save({
-            'config': config,
-            'teacher_encoder_state_dict': model.teacher_encoder.state_dict(),
-            'teacher_decoder_state_dict': model.teacher_decoder.state_dict(),
-            'student_encoder_state_dict': model.student_encoder.state_dict(),
-            'student_decoder_state_dict': model.student_decoder.state_dict(),
-            'feature_projector_state_dict': model.feature_projector.state_dict(),
-            'high_to_low_ratio': high_to_low_ratio,
-            'student_optimizer_state_dict': model.student_optimizer.state_dict(),
-            'final_loss': test_mse,
-        }, model_name)
-        
-        print("\n📊 Demonstrating enhancement on sample data...")
-        visualize_enhancement_results(model)
-        demo_enhancement_pipeline(model)
+        if results_dir is not None:
+            print("\n📊 Evaluating enhancement quality...")
+            test_mse = model.evaluate_enhancement_quality()
+            # Save the trained model in results_dir
+            model_save_path = results_dir / ("enhancement_model_" + "_".join(enhancement_tags) + ".pth")
+            print(f"\n💾 Saving model as {model_save_path}")
+            torch.save({
+                'config': config,
+                'teacher_encoder_state_dict': model.teacher_encoder.state_dict(),
+                'teacher_decoder_state_dict': model.teacher_decoder.state_dict(),
+                'student_encoder_state_dict': model.student_encoder.state_dict(),
+                'student_decoder_state_dict': model.student_decoder.state_dict(),
+                'feature_projector_state_dict': model.feature_projector.state_dict(),
+                'high_to_low_ratio': high_to_low_ratio,
+                'student_optimizer_state_dict': model.student_optimizer.state_dict(),
+                'final_loss': test_mse,
+                'enhancement_tags': enhancement_tags,
+            }, model_save_path)
+            # Plot and save loss curves
+            plot_loss_curves(results_dir)
+            print("\n📊 Demonstrating enhancement on sample data...")
+            visualize_enhancement_results(model, output_dir=results_dir)
+            demo_enhancement_pipeline(model, output_dir=results_dir)
         
     except Exception as e:
         print(f"❌ Error during training: {e}")

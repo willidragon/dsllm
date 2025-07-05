@@ -2,7 +2,7 @@
 original_sampling_rate: 100
 # List of downsampling rates to compare
 # (e.g., 100 = 1Hz if original is 100Hz, 1000 = 0.1Hz)
-downsample_factors: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+downsample_factors: [100, 500, 1000, 2000]
 # Length of each window in seconds (used for segmenting the data)
 window_size_seconds: 300
 # Ratio for balancing the dataset. 1.0 = perfect balance, <1.0 = more aggressive capping
@@ -11,7 +11,9 @@ balance_ratio: 0.05
 min_label_fraction: 0.5
 # Number of participants to use in the dataset
 num_participants: 151
-# Percentage of participants to use for training (rest for testing), e.g., 80 = 80% train, 20% test
-train_test_split: 80
+# Percentage splits for train/val/test
+train_split: 70
+val_split: 15
+test_split: 15
 # Directory containing the participant CSV files
 data_dir: /project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/dataset/capture24 

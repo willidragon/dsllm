@@ -51,7 +51,9 @@ min_label_fraction = config["min_label_fraction"]
 window_size_seconds = config["window_size_seconds"]
 data_dir = config.get("data_dir", os.path.join(base_data_dir, "capture24"))
 num_participants = config["num_participants"]
-train_test_split = config["train_test_split"]
+train_split = config.get("train_split", 70)
+val_split = config.get("val_split", 15)
+test_split = config.get("test_split", 15)
 
 # Automatically find all participant CSV files (assume .csv.gz extension)
 all_participant_files = [f for f in os.listdir(data_dir) if f.endswith('.csv.gz')]
@@ -63,12 +65,16 @@ num_total = len(all_participant_ids)
 num_to_use = min(num_participants, num_total)
 selected_participants = random.sample(all_participant_ids, num_to_use)
 
-# Split into train and test
-num_train = max(1, int(len(selected_participants) * train_test_split / 100))
+# Split into train, val, test
+num_train = int(num_to_use * train_split / 100)
+num_val = int(num_to_use * val_split / 100)
+num_test = num_to_use - num_train - num_val
 train_participants = selected_participants[:num_train]
-test_participants = selected_participants[num_train:]
+val_participants = selected_participants[num_train:num_train+num_val]
+test_participants = selected_participants[num_train+num_val:]
 
 print(f"Training participants: {train_participants}")
+print(f"Validation participants: {val_participants}")
 print(f"Testing participants: {test_participants}")
 
 # In[1]:
@@ -193,7 +199,7 @@ for _, row in annotation_dict.iterrows():
 activity_participant_windows = {}  # {activity: {participant_id: [segment indices]}}
 activity_total_windows = {}        # {activity: total_windows}
 
-for participant_id in train_participants + test_participants:
+for participant_id in train_participants + val_participants + test_participants:
     try:
         df = pd.read_csv(f'{data_dir}/{participant_id}.csv.gz')
         df = df.iloc[::downsample_factors[0]].reset_index(drop=True)
@@ -212,12 +218,15 @@ activity_caps = {a: upper_limit_activity if n > upper_limit_activity else n for 
 
 # Second pass: build balanced datasets
 all_train_segments = []
+all_val_segments = []
 all_test_segments = []
 all_train_labels = []
+all_val_labels = []
 all_test_labels = []
 
 for split_name, split_participants, all_segments, all_labels in [
     ("train", train_participants, all_train_segments, all_train_labels),
+    ("val", val_participants, all_val_segments, all_val_labels),
     ("test", test_participants, all_test_segments, all_test_labels)
 ]:
     for activity, participant_dict in activity_participant_windows.items():
@@ -247,6 +256,8 @@ for split_name, split_participants, all_segments, all_labels in [
 print(f"\nResults:")
 print(f"all_train_segments: {len(all_train_segments)}")
 print(f"all_train_labels: {len(all_train_labels)}")
+print(f"all_val_segments: {len(all_val_segments)}")
+print(f"all_val_labels: {len(all_val_labels)}")
 print(f"all_test_segments: {len(all_test_segments)}")
 print(f"all_test_labels: {len(all_test_labels)}")
 
@@ -266,6 +277,11 @@ train_post_activity_counter = Counter()
 for label in all_train_labels:
     train_post_activity_counter[label['activity_name']] += 1
 train_post_activity_spread = {str(k): int(v) for k, v in train_post_activity_counter.items()}
+
+val_post_activity_counter = Counter()
+for label in all_val_labels:
+    val_post_activity_counter[label['activity_name']] += 1
+val_post_activity_spread = {str(k): int(v) for k, v in val_post_activity_counter.items()}
 
 test_post_activity_counter = Counter()
 for label in all_test_labels:
@@ -291,6 +307,27 @@ for activity in pre_activity_spread:
     else:
         reason = "Unknown"
     activity_pruning_summary_train[activity] = {
+        "pre": pre,
+        "post": post,
+        "cut": diff,
+        "reason": reason
+    }
+# Calculate activity pruning summary for val
+activity_pruning_summary_val = {}
+for activity in pre_activity_spread:
+    pre = pre_activity_spread[activity]
+    post = val_post_activity_spread.get(activity, 0)
+    cap = activity_caps_str.get(activity, None)
+    diff = pre - post
+    if diff == 0:
+        reason = "No pruning"
+    elif cap is not None and str(post) == str(cap):
+        reason = f"Capped at balance_ratio ({cap})"
+    elif post < pre:
+        reason = "Removed due to label fraction, windowing, or insufficient data"
+    else:
+        reason = "Unknown"
+    activity_pruning_summary_val[activity] = {
         "pre": pre,
         "post": post,
         "cut": diff,
@@ -322,7 +359,7 @@ for activity in pre_activity_spread:
 
 all_rate_windows = {rate: {} for rate in downsample_factors}
 
-for participant_id in train_participants + test_participants:
+for participant_id in train_participants + val_participants + test_participants:
     try:
         df_full = pd.read_csv(f'{data_dir}/{participant_id}.csv.gz')
     except FileNotFoundError:
@@ -362,35 +399,46 @@ for participant_id in train_participants + test_participants:
 
 # --- Output: For each rate, collect all segments/labels and save ---
 for rate in downsample_factors:
-    # Collect train and test segments/labels for this rate
+    # Collect train, val, and test segments/labels for this rate
     train_segments = []
     train_labels = []
+    val_segments = []
+    val_labels = []
     test_segments = []
     test_labels = []
     for participant_id in all_rate_windows[rate]:
         for wid, (seg, lab) in all_rate_windows[rate][participant_id].items():
-            # Determine if this participant is in train or test
+            # Determine if this participant is in train, val, or test
             if participant_id in train_participants:
                 train_segments.append(seg)
                 train_labels.append(lab)
+            elif participant_id in val_participants:
+                val_segments.append(seg)
+                val_labels.append(lab)
             elif participant_id in test_participants:
                 test_segments.append(seg)
                 test_labels.append(lab)
     output_tag = f"{window_size_seconds}seconds_{rate}DS"
     output_path = os.path.join(base_output_dir, "stage_2_compare_buffer", output_tag)
     os.makedirs(os.path.join(output_path, 'train'), exist_ok=True)
+    os.makedirs(os.path.join(output_path, 'val'), exist_ok=True)
     os.makedirs(os.path.join(output_path, 'test'), exist_ok=True)
     # Save train segments/labels
     with open(os.path.join(output_path, 'train', f'capture24_train_data_stage2_{output_tag}.pkl'), 'wb') as f:
         pickle.dump(train_segments, f)
     with open(os.path.join(output_path, 'train', f'capture24_train_labels_stage2_{output_tag}.pkl'), 'wb') as f:
         pickle.dump(train_labels, f)
+    # Save val segments/labels
+    with open(os.path.join(output_path, 'val', f'capture24_val_data_stage2_{output_tag}.pkl'), 'wb') as f:
+        pickle.dump(val_segments, f)
+    with open(os.path.join(output_path, 'val', f'capture24_val_labels_stage2_{output_tag}.pkl'), 'wb') as f:
+        pickle.dump(val_labels, f)
     # Save test segments/labels
     with open(os.path.join(output_path, 'test', f'capture24_test_data_stage2_{output_tag}.pkl'), 'wb') as f:
         pickle.dump(test_segments, f)
     with open(os.path.join(output_path, 'test', f'capture24_test_labels_stage2_{output_tag}.pkl'), 'wb') as f:
         pickle.dump(test_labels, f)
-    print(f"[INFO] Saved {len(train_segments)} train and {len(test_segments)} test segments for rate {rate} at {output_path}")
+    print(f"[INFO] Saved {len(train_segments)} train, {len(val_segments)} val, and {len(test_segments)} test segments for rate {rate} at {output_path}")
 
     # Train settings for this rate
     train_settings = {
@@ -401,7 +449,9 @@ for rate in downsample_factors:
         "original_sampling_rate": original_sampling_rate,
         "sampling_rate": sampling_rate,
         "num_participants": num_participants,
-        "train_test_split": train_test_split,
+        "train_split": train_split,
+        "val_split": val_split,
+        "test_split": test_split,
         "balance_ratio": balance_ratio,
         "activity_caps": activity_caps_str,
         "pre_activity_spread": pre_activity_spread,
@@ -409,8 +459,33 @@ for rate in downsample_factors:
         "all_participants": all_participant_ids,
         "selected_participants": selected_participants,
         "train_participants": train_participants,
+        "val_participants": val_participants,
         "test_participants": test_participants,
         "activity_pruning_summary": activity_pruning_summary_train
+    }
+
+    # Val settings for this rate
+    val_settings = {
+        "window_size_seconds": window_size_seconds,
+        "window_size": window_size,
+        "stride": stride,
+        "downsample_factor": rate,
+        "original_sampling_rate": original_sampling_rate,
+        "sampling_rate": sampling_rate,
+        "num_participants": num_participants,
+        "train_split": train_split,
+        "val_split": val_split,
+        "test_split": test_split,
+        "balance_ratio": balance_ratio,
+        "activity_caps": activity_caps_str,
+        "pre_activity_spread": pre_activity_spread,
+        "post_activity_spread": val_post_activity_spread,
+        "all_participants": all_participant_ids,
+        "selected_participants": selected_participants,
+        "train_participants": train_participants,
+        "val_participants": val_participants,
+        "test_participants": test_participants,
+        "activity_pruning_summary": activity_pruning_summary_val
     }
 
     # Test settings for this rate
@@ -422,7 +497,9 @@ for rate in downsample_factors:
         "original_sampling_rate": original_sampling_rate,
         "sampling_rate": sampling_rate,
         "num_participants": num_participants,
-        "train_test_split": train_test_split,
+        "train_split": train_split,
+        "val_split": val_split,
+        "test_split": test_split,
         "balance_ratio": balance_ratio,
         "activity_caps": activity_caps_str,
         "pre_activity_spread": pre_activity_spread,
@@ -430,6 +507,7 @@ for rate in downsample_factors:
         "all_participants": all_participant_ids,
         "selected_participants": selected_participants,
         "train_participants": train_participants,
+        "val_participants": val_participants,
         "test_participants": test_participants,
         "activity_pruning_summary": activity_pruning_summary_test
     }
@@ -437,6 +515,8 @@ for rate in downsample_factors:
     # Save settings for this rate
     with open(os.path.join(output_path, 'train', 'settings.json'), 'w') as f:
         json.dump(train_settings, f, indent=2)
+    with open(os.path.join(output_path, 'val', 'settings.json'), 'w') as f:
+        json.dump(val_settings, f, indent=2)
     with open(os.path.join(output_path, 'test', 'settings.json'), 'w') as f:
         json.dump(test_settings, f, indent=2)
 
