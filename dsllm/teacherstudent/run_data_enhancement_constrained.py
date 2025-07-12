@@ -14,6 +14,10 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import argparse
 import yaml
+import csv
+import datetime
+import shutil
+import torch.optim as optim
 
 current_dir = Path(__file__).parent
 if str(current_dir) not in sys.path:
@@ -21,17 +25,46 @@ if str(current_dir) not in sys.path:
 
 from teacher_student_model import DataEnhancementTeacherStudentModel, DataEnhancementConfig
 
-class ConstrainedEnhancementModel(nn.Module):
-    """Model that enforces enhanced data passes through low-res points"""
-    
+class TeacherModel(nn.Module):
     def __init__(self, config):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(config.high_res_timesteps * config.feature_dim, config.teacher_hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(config.teacher_hidden_dim * 2, config.teacher_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.teacher_hidden_dim, config.teacher_hidden_dim // 2)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(config.teacher_hidden_dim // 2, config.teacher_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.teacher_hidden_dim, config.teacher_hidden_dim * 2),
+            nn.ReLU(),
+            nn.Linear(config.teacher_hidden_dim * 2, config.high_res_timesteps * config.feature_dim)
+        )
+        self.high_res_timesteps = config.high_res_timesteps
+        self.feature_dim = config.feature_dim
+    def forward(self, high_res_data):
+        batch_size = high_res_data.shape[0]
+        x = high_res_data.view(batch_size, -1)
+        features = self.encoder(x)
+        decoded = self.decoder(features)
+        decoded = decoded.view(batch_size, self.high_res_timesteps, self.feature_dim)
+        return decoded, features
+
+class ConstrainedEnhancementModel(nn.Module):
+    """Model that enforces enhanced data passes through low-res points, with optional label conditioning"""
+    
+    def __init__(self, config, num_classes=None, label_embed_dim=16):
         super().__init__()
         self.config = config
         self.low_res_timesteps = config.low_res_timesteps
         self.high_res_timesteps = config.high_res_timesteps
         self.feature_dim = config.feature_dim
         self.upsampling_factor = config.high_res_timesteps // config.low_res_timesteps
-        
+        self.label_embed_dim = label_embed_dim
+        self.num_classes = num_classes
         # Enhanced encoder-decoder architecture
         self.encoder = nn.Sequential(
             nn.Linear(config.low_res_timesteps * config.feature_dim, config.student_hidden_dim * 2),
@@ -41,30 +74,39 @@ class ConstrainedEnhancementModel(nn.Module):
             nn.ReLU(),
             nn.Linear(config.student_hidden_dim, config.student_hidden_dim // 2)
         )
-        
+        # Decoder input size depends on label conditioning
+        decoder_input_dim = config.student_hidden_dim // 2 + (label_embed_dim if num_classes else 0)
         self.decoder = nn.Sequential(
-            nn.Linear(config.student_hidden_dim // 2, config.student_hidden_dim),
+            nn.Linear(decoder_input_dim, config.student_hidden_dim),
             nn.ReLU(),
             nn.Linear(config.student_hidden_dim, config.student_hidden_dim * 2),
             nn.ReLU(),
             nn.Linear(config.student_hidden_dim * 2, config.high_res_timesteps * config.feature_dim)
         )
-        
+        # Label embedding if num_classes is provided
+        if num_classes:
+            self.label_embedding = nn.Embedding(num_classes, label_embed_dim)
+        else:
+            self.label_embedding = None
         # Calculate where low-res points go in high-res sequence
         self.low_res_indices = torch.arange(0, config.high_res_timesteps, self.upsampling_factor)
-        
-    def forward(self, low_res_data):
+    
+    def forward(self, low_res_data, labels=None):
         batch_size = low_res_data.shape[0]
-        
-        # Encode and decode
         x = low_res_data.view(batch_size, -1)
         features = self.encoder(x)
+        # Label conditioning
+        if self.label_embedding is not None and labels is not None:
+            label_embeds = self.label_embedding(labels)
+            features = torch.cat([features, label_embeds], dim=-1)
+        elif self.label_embedding is not None:
+            # Use zeros if no label is provided (test time)
+            device = features.device
+            label_embeds = torch.zeros(features.shape[0], self.label_embed_dim, device=device)
+            features = torch.cat([features, label_embeds], dim=-1)
         decoded = self.decoder(features)
         decoded = decoded.view(batch_size, self.high_res_timesteps, self.feature_dim)
-        
-        # HARD CONSTRAINT: Force enhanced data through low-res points
         enhanced_data = self.enforce_constraint(decoded, low_res_data)
-        
         return enhanced_data
     
     def enforce_constraint(self, decoded_data, low_res_data):
@@ -127,42 +169,49 @@ class EarlyStopping:
         
         return self.early_stop
 
+def detect_spike(current_loss, previous_loss, threshold=0.05):
+    """Detects a spike in loss if the increase exceeds the threshold."""
+    return (current_loss - previous_loss) / previous_loss > threshold
+
 class ConstrainedTrainer:
-    """Trainer with consistency loss to enforce constraint"""
+    """Trainer with consistency loss to enforce constraint and optional label conditioning"""
     
     def __init__(self, config):
         self.config = config
         self.device = config.device
-        
         # Load data using existing infrastructure
         self.base_model = DataEnhancementTeacherStudentModel(config)
         self.train_loader = self.base_model.train_loader
         self.test_loader = self.base_model.test_loader
-        
-        # Initialize constrained model
-        self.model = ConstrainedEnhancementModel(config).to(self.device)
-        
-        # Optimizer with higher initial learning rate and cosine annealing
+        # Always use num_classes=10 (labels 1-10, shifted to 0-9)
+        num_classes = 10
+        print(f"[DEBUG] num_classes set to: {num_classes}")
+        # Initialize constrained model with label conditioning if available
+        self.model = ConstrainedEnhancementModel(config, num_classes=num_classes).to(self.device)
+        # Optimizer with more conservative learning rate
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=0.002,  # Higher initial learning rate
-            weight_decay=1e-4,  # Slightly stronger regularization
-            betas=(0.9, 0.999)  # Default Adam betas
+            lr=0.001,  # Lower initial learning rate
+            weight_decay=1e-4,
+            betas=(0.9, 0.999)
         )
-        
-        # Cosine annealing scheduler with warm restarts
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        # Use a more stable learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
-            T_0=20,  # Restart every 20 epochs
-            T_mult=2,  # Double the restart interval after each restart
-            eta_min=1e-6  # Minimum learning rate
+            mode='min',
+            factor=0.5,  # Reduce LR by half when plateauing
+            patience=5,   # Wait 5 epochs before reducing LR
+            verbose=True,
+            min_lr=1e-6
         )
-        
-        # Loss weights - adjusted for better balance
+        # Loss weights - adjusted for better stability
         self.reconstruction_weight = 1.0
-        self.consistency_weight = 10.0  # Reduced from 50.0 to allow more flexibility
-        self.smoothness_weight = 0.05   # Reduced to prioritize reconstruction
-        
+        self.consistency_weight = 5.0  # Further reduced from 10.0 to improve stability
+        self.smoothness_weight = 0.01  # Reduced to focus on main objectives
+        # Internal list to store per-epoch metrics for optional logging / plotting
+        self._epoch_history = []  # (epoch, train_loss, val_loss, train_cons, val_cons, lr)
+        self.feature_projector = nn.Linear(config.student_hidden_dim // 2, config.teacher_hidden_dim // 2).to(self.device)
+    
     def consistency_loss(self, enhanced_data, low_res_data):
         """Ensure enhanced data exactly matches low-res data at sampled points"""
         total_loss = 0.0
@@ -182,65 +231,179 @@ class ConstrainedTrainer:
         diff2 = diff1[:, 1:, :] - diff1[:, :-1, :]
         return torch.mean(diff2 ** 2)
     
+    def train_teacher(self, epochs):
+        print("\n===== TEACHER TRAINING =====")
+        self.teacher_model.train()
+        optimizer = optim.AdamW(self.teacher_model.parameters(), lr=0.001, weight_decay=1e-4)
+        best_loss = float('inf')
+        early_stopping = EarlyStopping(patience=10, min_delta=0.0001)
+        log_file_teacher = open('training_log_teacher.csv', 'w', newline='')
+        log_writer_teacher = csv.writer(log_file_teacher)
+        log_writer_teacher.writerow(['epoch', 'train_loss', 'val_loss'])
+        previous_loss = float('inf')
+        for epoch in range(epochs):
+            total_loss = 0.0
+            for batch in self.train_loader:
+                if len(batch) == 3:
+                    _, high_res_batch, _ = batch
+                else:
+                    _, high_res_batch = batch
+                high_res_batch = high_res_batch.to(self.device)
+                optimizer.zero_grad()
+                recon, _ = self.teacher_model(high_res_batch)
+                loss = F.mse_loss(recon, high_res_batch)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            avg_loss = total_loss / len(self.train_loader)
+            print(f"[Teacher] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.6f}")
+            print(f"[Teacher] Early stopping counter: {early_stopping.counter}/{early_stopping.patience}")
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                torch.save(self.teacher_model.state_dict(), "best_teacher_model.pth")
+            if early_stopping(avg_loss):
+                print(f"[Teacher] Early stopping at epoch {epoch+1}")
+                break
+            if detect_spike(avg_loss, previous_loss):
+                torch.save(self.teacher_model.state_dict(), f"spike_teacher_model_epoch_{epoch+1}.pth")
+                print(f"Spike detected! Model saved at epoch {epoch+1}")
+            previous_loss = avg_loss
+        print(f"[Teacher] Training complete. Best loss: {best_loss:.6f}")
+        self.teacher_model.load_state_dict(torch.load("best_teacher_model.pth"))
+        self.teacher_model.eval()
+        log_writer_teacher.writerow([epoch+1, avg_loss, best_loss])
+        log_file_teacher.close()
+
+    def train_student(self, epochs, feature_loss_weight=0.5):
+        print("\n===== STUDENT (CONSTRAINED) TRAINING =====")
+        self.model.train()
+        best_loss = float('inf')
+        early_stopping = EarlyStopping(patience=10, min_delta=0.0001)
+        log_file_student = open('training_log_student.csv', 'w', newline='')
+        log_writer_student = csv.writer(log_file_student)
+        log_writer_student.writerow(['epoch', 'train_loss', 'val_loss', 'train_consistency', 'val_consistency', 'lr'])
+        previous_loss = float('inf')
+        for epoch in range(epochs):
+            total_loss = 0.0
+            total_consistency = 0.0
+            total_feature = 0.0
+            for batch_idx, batch in enumerate(self.train_loader):
+                if len(batch) == 3:
+                    low_res_batch, high_res_batch, labels = batch
+                    labels = labels.to(self.device) - 1
+                else:
+                    low_res_batch, high_res_batch = batch
+                    labels = None
+                low_res_batch = low_res_batch.to(self.device)
+                high_res_batch = high_res_batch.to(self.device)
+                self.optimizer.zero_grad()
+                # Student forward
+                enhanced_batch = self.model(low_res_batch, labels)
+                # Teacher features
+                with torch.no_grad():
+                    _, teacher_features = self.teacher_model(high_res_batch)
+                # Student features (from encoder, before label concat)
+                batch_size = low_res_batch.shape[0]
+                x = low_res_batch.view(batch_size, -1)
+                student_features = self.model.encoder(x)
+                projected_student_features = self.feature_projector(student_features)
+                # Losses
+                reconstruction_loss = F.mse_loss(enhanced_batch, high_res_batch)
+                consistency_loss = self.consistency_loss(enhanced_batch, low_res_batch)
+                smoothness_loss = self.smoothness_loss(enhanced_batch)
+                feature_loss = F.mse_loss(projected_student_features, teacher_features)
+                total_batch_loss = (
+                    self.reconstruction_weight * reconstruction_loss +
+                    self.consistency_weight * consistency_loss +
+                    self.smoothness_weight * smoothness_loss +
+                    feature_loss_weight * feature_loss
+                )
+                total_batch_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
+                total_loss += total_batch_loss.item()
+                total_consistency += consistency_loss.item()
+                total_feature += feature_loss.item()
+                if batch_idx % 50 == 0:
+                    avg_loss = total_loss / (batch_idx + 1)
+                    avg_consistency = total_consistency / (batch_idx + 1)
+                    avg_feature = total_feature / (batch_idx + 1)
+                    print(f"[Student] Batch [{batch_idx:4d}/{len(self.train_loader)}] - Loss: {avg_loss:.6f}, Consistency: {avg_consistency:.8f}, Feature: {avg_feature:.6f}")
+                    print(f"[Student] Early stopping counter: {early_stopping.counter}/{early_stopping.patience}")
+            avg_loss = total_loss / len(self.train_loader)
+            avg_consistency = total_consistency / len(self.train_loader)
+            avg_feature = total_feature / len(self.train_loader)
+            print(f"[Student] Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.6f}, Consistency: {avg_consistency:.8f}, Feature: {avg_feature:.6f}")
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                # self.save_model("best_constrained_model.pth") # REMOVE repeated saving
+            if early_stopping(avg_loss):
+                print(f"[Student] Early stopping at epoch {epoch+1}")
+                break
+            if detect_spike(avg_loss, previous_loss):
+                torch.save(self.model.state_dict(), f"spike_student_model_epoch_{epoch+1}.pth")
+                print(f"Spike detected! Model saved at epoch {epoch+1}")
+            previous_loss = avg_loss
+        print(f"[Student] Training complete. Best loss: {best_loss:.6f}")
+        # self.model.load_state_dict(torch.load("/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/enhancement_model/best_constrained_model.pth")) # REMOVE repeated loading
+        self.model.eval()
+        log_writer_student.writerow([epoch+1, avg_loss, best_loss, avg_consistency, avg_consistency, self.optimizer.param_groups[0]['lr']])
+        log_file_student.close()
+
     def train_epoch(self):
         self.model.train()
         total_loss = 0.0
         total_consistency = 0.0
-        
-        for batch_idx, (low_res_batch, high_res_batch) in enumerate(self.train_loader):
+        for batch_idx, batch in enumerate(self.train_loader):
+            if len(batch) == 3:
+                low_res_batch, high_res_batch, labels = batch
+                labels = labels.to(self.device) - 1  # shift to zero-based
+            else:
+                low_res_batch, high_res_batch = batch
+                labels = None
             low_res_batch = low_res_batch.to(self.device)
             high_res_batch = high_res_batch.to(self.device)
-            
             self.optimizer.zero_grad()
-            
-            # Forward pass and loss calculation
-            enhanced_batch = self.model(low_res_batch)
+            enhanced_batch = self.model(low_res_batch, labels)
             reconstruction_loss = F.mse_loss(enhanced_batch, high_res_batch)
             consistency_loss = self.consistency_loss(enhanced_batch, low_res_batch)
             smoothness_loss = self.smoothness_loss(enhanced_batch)
-            
-            # Combined loss with high consistency weight
             total_batch_loss = (
                 self.reconstruction_weight * reconstruction_loss +
                 self.consistency_weight * consistency_loss +
                 self.smoothness_weight * smoothness_loss
             )
-            
-            # Backward pass
             total_batch_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
-            
             total_loss += total_batch_loss.item()
             total_consistency += consistency_loss.item()
-            
-            # Print progress every 50 batches
             if batch_idx % 50 == 0:
                 avg_loss = total_loss / (batch_idx + 1)
                 avg_consistency = total_consistency / (batch_idx + 1)
                 print(f"Batch [{batch_idx:4d}/{len(self.train_loader)}] - "
                       f"Loss: {avg_loss:.6f}, Consistency: {avg_consistency:.8f}")
-        
         return total_loss / len(self.train_loader), total_consistency / len(self.train_loader)
     
     def evaluate(self):
         self.model.eval()
         total_loss = 0.0
         total_consistency = 0.0
-        
         with torch.no_grad():
-            for low_res_batch, high_res_batch in self.test_loader:
+            for batch in self.test_loader:
+                if len(batch) == 3:
+                    low_res_batch, high_res_batch, labels = batch
+                    labels = labels.to(self.device) - 1  # shift to zero-based
+                else:
+                    low_res_batch, high_res_batch = batch
+                    labels = None
                 low_res_batch = low_res_batch.to(self.device)
                 high_res_batch = high_res_batch.to(self.device)
-                
-                enhanced_batch = self.model(low_res_batch)
-                
+                enhanced_batch = self.model(low_res_batch, labels)
                 loss = F.mse_loss(enhanced_batch, high_res_batch)
                 consistency = self.consistency_loss(enhanced_batch, low_res_batch)
-                
                 total_loss += loss.item()
                 total_consistency += consistency.item()
-        
         return total_loss / len(self.test_loader), total_consistency / len(self.test_loader)
     
     def train(self, epochs):
@@ -253,18 +416,23 @@ class ConstrainedTrainer:
         print(f"   - Smoothness weight: {self.smoothness_weight}")
         
         best_loss = float('inf')
-        early_stopping = EarlyStopping(patience=10, min_delta=0.0001)  # Stop if no improvement for 10 epochs
+        early_stopping = EarlyStopping(patience=15, min_delta=0.0001)  # Increased patience
         
+        # --- CSV logging setup (mimics original pipeline) ---
+        log_file = open('training_log_constrained.csv', 'w', newline='')
+        log_writer = csv.writer(log_file)
+        log_writer.writerow(['epoch', 'train_loss', 'val_loss', 'train_consistency', 'val_consistency', 'lr'])
+
         for epoch in range(epochs):
             # Train epoch
             train_loss, train_consistency = self.train_epoch()
             
-            # Step the scheduler every epoch
-            current_lr = self.optimizer.param_groups[0]['lr']
-            self.scheduler.step()
-            
             # Evaluate
             val_loss, val_consistency = self.evaluate()
+            
+            # Step the scheduler using validation loss
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.scheduler.step(val_loss)
             
             print(f"Epoch {epoch+1}/{epochs}:")
             print(f"  Train - Loss: {train_loss:.6f}, Consistency: {train_consistency:.8f}")
@@ -273,8 +441,7 @@ class ConstrainedTrainer:
             
             if val_loss < best_loss:
                 best_loss = val_loss
-                self.save_model("best_constrained_model.pth")
-                print(f"  ✅ Best model saved!")
+                print(f"  ✅ Best model so far!")
             
             if val_consistency < 1e-10:
                 print(f"  🎯 Perfect constraint satisfaction achieved!")
@@ -283,8 +450,35 @@ class ConstrainedTrainer:
             if early_stopping(val_loss):
                 print(f"Training stopped early at epoch {epoch+1}")
                 break
+            
+            # Log metrics
+            log_writer.writerow([epoch+1, train_loss, val_loss, train_consistency, val_consistency, current_lr])
+            log_file.flush()
         
+        # --- Close log file ---
+        log_file.close()
+
         print(f"✅ Training completed! Best loss: {best_loss:.6f}")
+
+        # --- Collate results directory like the original script ---
+        now = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        ratio_tag = f"{self.config.high_res_timesteps//self.config.low_res_timesteps}x"
+        results_dir = Path(f"/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/enhancement_model/constrained_enhancement_{ratio_tag}_{now}")
+        results_dir.mkdir(parents=True, exist_ok=True)
+        # Move log file inside results dir
+        shutil.move('training_log_constrained.csv', results_dir / 'training_log_constrained.csv')
+        print(f"📁 All logs saved to {results_dir}")
+
+        # --- Save final model in results_dir ---
+        model_save_path = results_dir / f"constrained_enhancement_model_{ratio_tag}.pth"
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'config': self.config,
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            # Optionally add teacher model, feature projector, etc. if needed
+        }, model_save_path)
+        print(f"💾 Model saved to {model_save_path}")
+        return results_dir
     
     def save_model(self, filename):
         save_path = Path(f"/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/enhancement_model/{filename}")
@@ -297,49 +491,105 @@ class ConstrainedTrainer:
         }, save_path)
         print(f"💾 Model saved to {save_path}")
 
-def visualize_constrained_results(trainer, num_samples=3):
+    def enhance_data(self, low_res_data):
+        """Public helper that mirrors DataEnhancementTeacherStudentModel.enhance_data."""
+        self.model.eval()
+        with torch.no_grad():
+            if isinstance(low_res_data, np.ndarray):
+                low_res_data = torch.FloatTensor(low_res_data)
+            low_res_data = low_res_data.to(self.device)
+            enhanced = self.model(low_res_data)
+            return enhanced.cpu().numpy()
+
+    def evaluate_enhancement_quality(self):
+        """Compute average MSE of reconstructed signal on the held-out test set."""
+        self.model.eval()
+        total_mse = 0.0
+        total_samples = 0
+        with torch.no_grad():
+            for batch in self.test_loader:
+                low_res_batch, high_res_batch = batch[:2]
+                low_res_batch = low_res_batch.to(self.device)
+                high_res_batch = high_res_batch.to(self.device)
+                recon = self.model(low_res_batch)
+                mse = F.mse_loss(recon, high_res_batch)
+                total_mse += mse.item() * low_res_batch.size(0)
+                total_samples += low_res_batch.size(0)
+        return total_mse / max(total_samples, 1)
+
+def visualize_teacher_results(trainer, num_samples=3, output_dir=None):
+    """Visualize teacher model results and compare to ground truth."""
+    trainer.teacher_model.eval()
+    test_iter = iter(trainer.test_loader)
+    batch = next(test_iter)
+    low_res_batch, high_res_batch = batch[:2]
+    high_res_samples = high_res_batch[:num_samples].to(trainer.device)
+    with torch.no_grad():
+        teacher_recon, _ = trainer.teacher_model(high_res_samples)
+    # Convert to numpy
+    high_res_cpu = high_res_samples.cpu().numpy()
+    teacher_cpu = teacher_recon.cpu().numpy()
+    # Plot results
+    import matplotlib.pyplot as plt
+    import numpy as np
+    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 4*num_samples))
+    if num_samples == 1:
+        axes = axes.reshape(1, -1)
+    feature_names = ['X-axis', 'Y-axis', 'Z-axis']
+    for sample_idx in range(num_samples):
+        for feature_idx in range(3):
+            ax = axes[sample_idx, feature_idx] if num_samples > 1 else axes[feature_idx]
+            time_high = np.linspace(0, 300, len(high_res_cpu[sample_idx, :, feature_idx]))
+            ax.plot(time_high, high_res_cpu[sample_idx, :, feature_idx], 'g-', linewidth=1, label='True High-res', alpha=0.8)
+            ax.plot(time_high, teacher_cpu[sample_idx, :, feature_idx], 'b-', linewidth=2, label='Teacher Output', alpha=0.9)
+            ax.set_title(f'Sample {sample_idx+1} - {feature_names[feature_idx]}')
+            ax.set_xlabel('Time (seconds)')
+            ax.set_ylabel('Acceleration (g)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    if output_dir is not None:
+        import os
+        plt.savefig(os.path.join(output_dir, 'teacher_verification.png'), dpi=300, bbox_inches='tight')
+        print(f"📊 Teacher verification plot saved to: {os.path.join(output_dir, 'teacher_verification.png')}")
+    else:
+        plt.savefig('teacher_verification.png', dpi=300, bbox_inches='tight')
+        print("📊 Teacher verification plot saved to: teacher_verification.png")
+    plt.show()
+
+def visualize_constrained_results(trainer, num_samples=3, output_dir=None):
     """Visualize results and verify constraints are satisfied"""
     trainer.model.eval()
-    
     test_iter = iter(trainer.test_loader)
-    low_res_batch, high_res_batch = next(test_iter)
-    
+    batch = next(test_iter)
+    low_res_batch, high_res_batch = batch[:2]
     low_res_samples = low_res_batch[:num_samples].to(trainer.device)
     high_res_samples = high_res_batch[:num_samples].to(trainer.device)
-    
     with torch.no_grad():
         enhanced_samples = trainer.model(low_res_samples)
-    
     # Convert to numpy
     low_res_cpu = low_res_samples.cpu().numpy()
     high_res_cpu = high_res_samples.cpu().numpy()
     enhanced_cpu = enhanced_samples.cpu().numpy()
-    
     # Plot results
+    import matplotlib.pyplot as plt
+    import numpy as np
     fig, axes = plt.subplots(num_samples, 3, figsize=(15, 4*num_samples))
     if num_samples == 1:
         axes = axes.reshape(1, -1)
-    
     feature_names = ['X-axis', 'Y-axis', 'Z-axis']
     upsampling_factor = trainer.model.upsampling_factor
-    
     for sample_idx in range(num_samples):
         for feature_idx in range(3):
             ax = axes[sample_idx, feature_idx] if num_samples > 1 else axes[feature_idx]
-            
-            # Time arrays
             time_high = np.linspace(0, 300, len(high_res_cpu[sample_idx, :, feature_idx]))
             time_low = np.linspace(0, 300, len(low_res_cpu[sample_idx, :, feature_idx]))
-            
-            # Plot signals
             ax.plot(time_high, high_res_cpu[sample_idx, :, feature_idx], 'g-', 
                    linewidth=1, label='True High-res', alpha=0.8)
             ax.plot(time_high, enhanced_cpu[sample_idx, :, feature_idx], 'r-', 
                    linewidth=2, label='Enhanced (CONSTRAINED)', alpha=0.9)
             ax.scatter(time_low, low_res_cpu[sample_idx, :, feature_idx], 
                       c='blue', s=50, label='Low-res Input', zorder=5)
-            
-            # Verify constraint: check if enhanced passes through blue dots
             constraint_satisfied = True
             for i, low_val in enumerate(low_res_cpu[sample_idx, :, feature_idx]):
                 enhanced_val = enhanced_cpu[sample_idx, i * upsampling_factor, feature_idx]
@@ -348,17 +598,20 @@ def visualize_constrained_results(trainer, num_samples=3):
                     constraint_satisfied = False
                     ax.plot(time_low[i], enhanced_val, 'rx', markersize=10, 
                            markeredgewidth=3, label='VIOLATION!')
-            
             constraint_text = "✅ CONSTRAINT SATISFIED" if constraint_satisfied else "❌ CONSTRAINT VIOLATED"
             ax.set_title(f'Sample {sample_idx+1} - {feature_names[feature_idx]}\n{constraint_text}')
             ax.set_xlabel('Time (seconds)')
             ax.set_ylabel('Acceleration (g)')
             ax.legend()
             ax.grid(True, alpha=0.3)
-    
     plt.tight_layout()
-    plt.savefig('constrained_enhancement_verification.png', dpi=300, bbox_inches='tight')
-    print("📊 Constraint verification plot saved to: constrained_enhancement_verification.png")
+    if output_dir is not None:
+        import os
+        plt.savefig(os.path.join(output_dir, 'constrained_enhancement_verification.png'), dpi=300, bbox_inches='tight')
+        print(f"📊 Constraint verification plot saved to: {os.path.join(output_dir, 'constrained_enhancement_verification.png')}")
+    else:
+        plt.savefig('constrained_enhancement_verification.png', dpi=300, bbox_inches='tight')
+        print("📊 Constraint verification plot saved to: constrained_enhancement_verification.png")
     plt.show()
 
 def load_paths():
@@ -368,13 +621,68 @@ def load_paths():
     with open(paths_file) as f:
         return yaml.safe_load(f)
 
+def plot_loss_curves(results_dir):
+    """Plot train/val loss curves for the constrained run."""
+    import pandas as pd
+    results_dir = Path(results_dir)
+    csv_path = results_dir / 'training_log_constrained.csv'
+    if not csv_path.exists():
+        print(f"⚠️  No training log found at {csv_path}, skipping loss plot.")
+        return
+
+    df = pd.read_csv(csv_path)
+    plt.figure(figsize=(8,4))
+    plt.plot(df['epoch'], df['train_loss'], label='Train Loss')
+    plt.plot(df['epoch'], df['val_loss'], label='Val Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Constrained Model Loss Curve')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(results_dir / 'constrained_loss_curve.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+### DEMO / PIPELINE FUNCTION ###
+
+def demo_enhancement_pipeline(trainer, num_samples: int = 5, output_dir=None):
+    """Mirror of original demo pipeline but using constrained trainer."""
+    print("\n🚀 Data Enhancement Pipeline Demo (CONSTRAINED)")
+    print("=" * 50)
+    test_iter = iter(trainer.test_loader)
+    batch = next(test_iter)
+    low_res_batch, high_res_batch = batch[:2]
+    
+    low_res_demo = low_res_batch[:num_samples]
+    high_res_demo = high_res_batch[:num_samples]
+
+    print(f"📥 Input: Low-resolution data  Shape: {low_res_demo.shape}")
+    enhanced_data = trainer.enhance_data(low_res_demo)
+
+    print(f"\n📤 Output: Enhanced high-resolution data  Shape: {enhanced_data.shape}")
+    print(f"   Upsampling factor: {enhanced_data.shape[1] // low_res_demo.shape[1]}x")
+    mse = np.mean((enhanced_data - high_res_demo.numpy())**2)
+    print(f"\n📊 Reconstruction Quality - MSE: {mse:.6f}  RMSE: {np.sqrt(mse):.6f}")
+    # Optionally save
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / 'demo_summary.txt', 'w') as f:
+            f.write(f"Input shape: {low_res_demo.shape}\n")
+            f.write(f"Output shape: {enhanced_data.shape}\n")
+            f.write(f"Target shape: {high_res_demo.shape}\n")
+            f.write(f"MSE: {mse:.6f}\n")
+            f.write(f"RMSE: {np.sqrt(mse):.6f}\n")
+    return enhanced_data
+
 def main():
     parser = argparse.ArgumentParser(description="Constrained Data Enhancement Training")
     parser.add_argument('--high_ds', type=int, default=100, help='High-res DS rate')
     parser.add_argument('--low_ds', type=int, default=1000, help='Low-res DS rate')
-    parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
+    parser.add_argument('--epochs', type=int, default=300, help='Training epochs')
+    parser.add_argument('--teacher_epochs', type=int, default=300, help='Teacher training epochs')
     parser.add_argument('--data_subdir', type=str, default='stage_2_compare_buffer')
-    parser.add_argument('--batch_size', type=int, default=16, help='Training batch size')
+    parser.add_argument('--batch_size', type=int, default=32, help='Training batch size')
     parser.add_argument('--test_mode', action='store_true', help='Run in test mode with reduced dataset and epochs')
     args = parser.parse_args()
 
@@ -440,6 +748,9 @@ def main():
     try:
         # Initialize and train
         trainer = ConstrainedTrainer(config)
+        trainer.teacher_model = TeacherModel(config).to(trainer.device)
+        trainer.train_teacher(epochs=args.teacher_epochs)
+        results_dir = trainer.train(epochs=args.epochs)
         
         # Reduce dataset size in test mode
         if args.test_mode:
@@ -449,19 +760,27 @@ def main():
             print(f"   Train: {len(trainer.train_loader.dataset)} samples")
             print(f"   Test: {len(trainer.test_loader.dataset)} samples")
         
-        trainer.train(args.epochs)
-        
         # Visualize and verify constraints
         print("\n📊 Generating constraint verification plots...")
-        visualize_constrained_results(trainer)
+        visualize_teacher_results(trainer, num_samples=3, output_dir=results_dir)
+        visualize_constrained_results(trainer, num_samples=3, output_dir=results_dir)
         
-        # Save final model
-        model_name = f"constrained_enhancement_model_{upsampling_factor}x.pth"
-        trainer.save_model(model_name)
-        
+        # Evaluate enhancement quality on test set
+        print("\n📊 Evaluating enhancement quality on test set...")
+        test_mse = trainer.evaluate_enhancement_quality()
+        print(f"   Test MSE: {test_mse:.6f}")
+
         print(f"\n✅ CONSTRAINED training completed!")
         print(f"🎯 Enhanced data now GUARANTEED to pass through low-res points!")
-        print(f"💾 Model saved as: {model_name}")
+        # print(f"💾 Model saved as: {model_name}") # REMOVE repeated saving
+
+        # Plot loss curves
+        plot_loss_curves(results_dir)
+        # plot_teacher_loss_curve() # REMOVE repeated saving
+        # plot_student_loss_curve() # REMOVE repeated saving
+
+        # Demo pipeline
+        demo_enhancement_pipeline(trainer, output_dir=results_dir)
         
     except Exception as e:
         print(f"❌ Error during training: {e}")

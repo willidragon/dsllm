@@ -1,329 +1,187 @@
 \chapter{Methodology}
 
-\hspace{2em}In this chapter, we present our novel two-stage methodology for enhancing Large Language Model-based Human Activity Recognition (HAR) performance on coarse-grained wearable sensor data. Our approach addresses the fundamental challenge of maintaining recognition accuracy while operating under severe resource constraints typical of wearable devices. The methodology consists of two interconnected stages: (1) \textbf{Teacher-Student Data Enhancement} that learns to upsample low-resolution sensor data to high-resolution quality, and (2) \textbf{SensorLLM Training} on the enhanced data for improved HAR performance.
-
-\begin{figure}
+\begin{figure}[H]
     \centering
-    % \includegraphics[width=1\linewidth]{figs/methodology_overview.png}
+    \includegraphics[width=1\linewidth]{figs/CH3_METHOD/Method.png}
     \caption{Overview of the proposed two-stage methodology for coarse-grained sensor HAR}
     \label{fig:methodology-overview}
 \end{figure}
 
-\section{Stage 1: Teacher-Student Data Enhancement}
+\hspace{2em}In this chapter, we present our novel two-stage methodology for enhancing Large Language Model-based Human Activity Recognition (HAR) performance on coarse-grained wearable sensor data. Our approach addresses the fundamental challenge of maintaining recognition accuracy while operating under severe resource constraints typical of wearable devices. The methodology consists of two interconnected stages: (1) \textbf{SAITS-based Time Series Imputation} that enhances low-resolution sensor data through state-of-the-art self-attention mechanisms, and (2) \textbf{SensorLLM Training} on the enhanced data for improved HAR performance.
 
-\hspace{2em}The first stage of our methodology employs a teacher-student learning framework to address the fundamental challenge of limited sensor data quality in resource-constrained environments. This stage learns to enhance coarse-grained, low-resolution sensor data to high-resolution equivalent quality, enabling subsequent stages to operate with richer temporal information despite the original data constraints.
+% =====================
+% SAITS-based Imputation for Stage 1
+% =====================
+\section{Stage 1: SAITS-based Time Series Imputation}
 
-\subsection{Problem Formulation}
+\hspace{2em}The first stage of our methodology employs SAITS (Self-Attention-based Imputation for Time Series) to enhance coarse-grained sensor data. SAITS is a state-of-the-art deep learning model designed specifically for imputing missing values and enhancing the quality of multivariate time series data. Its self-attention architecture enables efficient modeling of long-range dependencies and complex temporal patterns, outperforming traditional RNN-based and Transformer-based imputation methods in both accuracy and computational efficiency.
 
-\hspace{2em}Given a dataset of sensor readings collected at different sampling rates, we define high-resolution data $\mathbf{X}^h \in \mathbb{R}^{N \times T_h \times d}$ and low-resolution data $\mathbf{X}^l \in \mathbb{R}^{N \times T_l \times d}$, where $N$ is the number of samples, $T_h$ and $T_l$ are the temporal dimensions with $T_h \gg T_l$, and $d$ is the feature dimension (typically 3 for tri-axial accelerometer data). The downsampling relationship is defined by a factor $r = T_h / T_l$, where $r$ represents the temporal resolution reduction.
+\subsection{Motivation and Advantages}
 
-\hspace{2em}The enhancement task aims to learn a mapping function $f: \mathbb{R}^{T_l \times d} \rightarrow \mathbb{R}^{T_h \times d}$ that can reconstruct high-resolution sensor data from low-resolution input while preserving the essential temporal patterns and activity-relevant features.
+\hspace{2em}The motivation for adopting SAITS is its superior ability to recover fine-grained temporal information from coarse or partially observed sensor data. Unlike recursive models, SAITS leverages pure self-attention mechanisms, which provide faster training, lower memory usage, and improved imputation accuracy. Empirical studies have shown that SAITS achieves 12\%--38\% lower mean absolute error (MAE) than BRITS and 7\%--39\% lower mean squared error (MSE) than NRTSI, while requiring only 15\%--30\% of the parameters of a standard Transformer.
 
-\subsection{Teacher-Student Architecture}
+\subsection{SAITS Architecture}
 
-\hspace{2em}Our enhancement framework consists of four key components: a Teacher Encoder, Teacher Decoder, Student Encoder, and Student Decoder, designed to facilitate knowledge transfer from high-resolution to low-resolution domains.
-
-\subsubsection{Teacher Network}
-
-\hspace{2em}The teacher network operates on high-resolution sensor data and serves as the source of rich temporal knowledge. The teacher encoder $E_T$ employs a convolutional-LSTM architecture for temporal feature extraction:
-
-\begin{equation}
-\mathbf{z}_T = E_T(\mathbf{X}^h; \theta_T^e)
-\end{equation}
-
-where $\theta_T^e$ represents the teacher encoder parameters. The encoder architecture consists of:
+\hspace{2em}SAITS consists of multiple stacked self-attention layers, each designed to capture both local and global temporal dependencies in the input sequence. The model operates as follows:
 
 \begin{itemize}
-    \item \textbf{Convolutional Layers}: Three 1D convolutional layers with kernel sizes [7, 5, 3], filters [64, 128, 256], and batch normalization with ReLU activation
-    \item \textbf{Bidirectional LSTM}: Two-layer bidirectional LSTM with hidden dimension 256, dropout 0.1 for temporal modeling
-    \item \textbf{Feature Projection}: Linear layer mapping to final hidden dimension (512 for teacher)
+    \item \textbf{Input}: Multivariate time series with missing values (e.g., low-resolution or partially observed sensor data)
+    \item \textbf{Masking}: A binary mask indicates observed and missing values
+    \item \textbf{Self-Attention Blocks}: Each block applies multi-head self-attention to model dependencies across all time steps and features
+    \item \textbf{Imputation}: The model predicts missing values by aggregating information from observed entries using learned attention weights
+    \item \textbf{Loss Function}: The imputation loss is computed only on the originally missing entries, typically using mean absolute error (MAE) or mean squared error (MSE)
 \end{itemize}
 
-The teacher decoder $D_T$ reconstructs the high-resolution data using progressive upsampling:
+\subsection{Integration into the HAR Pipeline}
 
-\begin{equation}
-\hat{\mathbf{X}}^h = D_T(\mathbf{z}_T; \theta_T^d)
-\end{equation}
+\hspace{2em}In our pipeline, SAITS is trained to impute high-resolution sensor data from coarse-grained or downsampled input. The enhanced (imputed) data produced by SAITS is then used as input for downstream human activity recognition (HAR) with SensorLLM. The integration process is as follows:
 
-\subsubsection{Student Network}
+\begin{enumerate}
+    \item \textbf{Data Preparation}: Low-resolution and high-resolution sensor data pairs are converted into the HDF5 format expected by SAITS, with appropriate masking of missing values.
+    \item \textbf{SAITS Training}: The model is trained on the training split, using the low-resolution data as input and the high-resolution data as ground truth for imputation.
+    \item \textbf{Imputation}: After training, SAITS imputes missing values in the low-resolution data, producing enhanced sequences with restored temporal detail.
+    \item \textbf{Downstream HAR}: The imputed data is segmented, tokenized, and used to train SensorLLM for activity recognition, as described in Stage 2.
+\end{enumerate}
 
-\hspace{2em}The student network operates on low-resolution input and learns to generate high-resolution output through knowledge distillation from the teacher. The student encoder $E_S$ follows the same architectural pattern but with reduced hidden dimensions (256):
+\subsection{SAITS Implementation Details}
 
-\begin{equation}
-\mathbf{z}_S = E_S(\mathbf{X}^l; \theta_S^e)
-\end{equation}
+\hspace{2em}We use the official SAITS implementation, with data conversion handled by a custom script that prepares the HDF5 datasets. The model is run using the provided training script, and the best checkpoint (based on validation loss) is used for imputation on the test set. The imputed data is then passed to the HAR stage for further processing.
 
-The student decoder $D_S$ employs progressive upsampling with residual connections to generate enhanced high-resolution data:
+% --- Mathematical Formulation of SAITS ---
+\subsection{Mathematical Formulation}
 
-\begin{equation}
-\hat{\mathbf{X}}^{enhanced} = D_S(\mathbf{z}_S; \theta_S^d)
-\end{equation}
+\hspace{2em}Let $\mathbf{X}\in\mathbb{R}^{T\times d}$ denote a multivariate time series of length $T$ with $d$ sensor channels and let $\mathbf{M}\in\{0,1\}^{T\times d}$ be the corresponding binary observation mask ($M_{t,f}=1$ if the value $X_{t,f}$ is observed). SAITS processes $[\mathbf{X},\mathbf{M}]$ through three consecutive \emph{dual-masked self-attention} (DMSA) blocks.
 
-The decoder architecture includes:
+\begin{enumerate}
+    \item \textbf{Block~1 (coarse estimation)} projects the concatenated input into the model space via a linear map $\phi$, adds positional encodings, and passes the result through $G$ groups of $L$ stacked multi-head self-attention layers with shared parameters:
+    \[
+        \mathbf{H}^{(1)}=\operatorname{DMSA}_1\!\bigl(\phi([\mathbf{X},\mathbf{M}])\bigr),\qquad
+        \mathbf{\tilde X}^{(1)}=\psi\bigl(\mathbf{H}^{(1)}\bigr),
+    \]
+    where $\psi$ maps the hidden representation back to the original feature dimension.  A first imputation is obtained as $\mathbf{X}'=\mathbf{M}\odot\mathbf{X}+(1-\mathbf{M})\odot\mathbf{\tilde X}^{(1)}$.
+    \item \textbf{Block~2 (refinement)} applies another DMSA stack to $[\mathbf{X}',\mathbf{M}]$ to produce a refined estimate $\mathbf{\tilde X}^{(2)}$.
+    \item \textbf{Block~3 (gated fusion)} fuses the two estimates via a learnable gate $\boldsymbol{\eta}\in[0,1]^{T\times d}$ that depends on the missing mask and the attention map $\mathbf{A}$ from Block~2:
+    \[
+        \boldsymbol{\eta}=\sigma\bigl(W[\mathbf{M},\mathbf{A}]\bigr),\qquad
+        \mathbf{\tilde X}^{(3)}=(1-\boldsymbol{\eta})\odot\mathbf{\tilde X}^{(2)}+\boldsymbol{\eta}\odot\mathbf{\tilde X}^{(1)}.
+    \]
+\end{enumerate}
 
+\noindent The final imputation is $\hat{\mathbf{X}}=\mathbf{M}\odot\mathbf{X}+(1-\mathbf{M})\odot\mathbf{\tilde X}^{(3)}$, which is forwarded to downstream HAR.
+
+\paragraph{Training Objective.}  SAITS jointly minimises a reconstruction loss on observed values (Observed–Reconstruction Task, ORT) and an imputation loss on artificially masked values (Masked–Imputation Task, MIT):
+\[
+\mathcal{L}_{\text{SAITS}}=
+\lambda_{\text{rec}}\,\operatorname{MAE}\bigl(\mathbf{M}\odot\mathbf{\tilde X}^{(3)},\,\mathbf{M}\odot\mathbf{X}\bigr)+
+\lambda_{\text{imp}}\,\operatorname{MAE}\bigl(\mathbf{M}^{\mathrm h}\odot\mathbf{\tilde X}^{(3)},\,\mathbf{M}^{\mathrm h}\odot\mathbf{X}\bigr),
+\]
+where $\mathbf{M}^{\mathrm h}$ is a random hold-out mask used only during training and $(\lambda_{\text{rec}},\lambda_{\text{imp}})=(1,1)$ by default.  Following the original paper, the same loss is also computed on $\mathbf{\tilde X}^{(1)}$ and $\mathbf{\tilde X}^{(2)}$ and then averaged.
+
+\paragraph{Hyper-parameter Choices.}  Unless stated otherwise we adopt the ``best'' configuration recommended by the authors: $G{=}5$, $L{=}1$, hidden dimension $d_{\text{model}}{=}256$, feed-forward dimension $d_{\text{inner}}{=}512$, $n_{\text{heads}}{=}8$, key/value dimension $d_k{=}d_v{=}32$, dropout~$0$, and the \textit{inner\_group} parameter-sharing strategy.  This yields a compact model with about $3.2\,$M parameters.
+
+\paragraph{Positioning and Novelty.}  Prior works \cite{Du2023SAITS, li2024sensorllm} examine imputation and sensor-language modelling in isolation. In contrast, we explicitly \emph{chain} SAITS with SensorLLM and show that high-quality reconstruction is a \emph{prerequisite} for reliable LLM-based HAR under aggressive downsampling. This simple yet unexplored coupling turns out to be surprisingly effective and constitutes the core novelty of our framework.
+
+% Algorithm: Stage 1 SAITS-based Time Series Imputation
+\begin{algorithm}[t]
+\caption{Stage 1 SAITS-based Time Series Imputation}
+\KwIn{Low-resolution dataset $\mathcal{D}_{low}$, high-resolution dataset $\mathcal{D}_{high}$, number of DMSA groups $G$, layers per group $L$, model dimension $d_{model}$, learning rate $\eta$, training epochs $N_{ep}$}
+\KwOut{Trained SAITS model $\Theta_{SAITS}$ for data enhancement}
+
+Initialize SAITS model with $G$ DMSA groups and dimension $d_{model}$\;
+Initialize Adam optimizer with learning rate $\eta$\;
+Compute z-score normalization parameters $\mu$, $\sigma$ from training data\;
+
+\For{$epoch \leftarrow 1$ \KwTo $N_{ep}$}{
+    \ForEach{mini-batch $(\mathbf{X}_{low}, \mathbf{X}_{high}) \sim (\mathcal{D}_{low}, \mathcal{D}_{high})$}{
+        $\mathbf{M} \leftarrow$ \textbf{GenerateMask}$(\mathbf{X}_{low}, \mathbf{X}_{high})$\;
+        $\mathbf{M}^h \leftarrow$ \textbf{GenerateHoldoutMask}$(\mathbf{M})$\;
+        
+        % Block 1: Coarse Estimation
+        $\mathbf{H}^{(1)} \leftarrow \text{DMSA}_1(\phi([\mathbf{X}_{low}, \mathbf{M}]))$\;
+        $\mathbf{\tilde{X}}^{(1)} \leftarrow \psi(\mathbf{H}^{(1)})$\;
+        $\mathbf{X}' \leftarrow \mathbf{M} \odot \mathbf{X}_{low} + (1-\mathbf{M}) \odot \mathbf{\tilde{X}}^{(1)}$\;
+        
+        % Block 2: Refinement
+        $\mathbf{\tilde{X}}^{(2)} \leftarrow \text{DMSA}_2([\mathbf{X}', \mathbf{M}])$\;
+        
+        % Block 3: Gated Fusion
+        $\mathbf{A} \leftarrow$ \textbf{GetAttentionMap}$(\text{DMSA}_2)$\;
+        $\boldsymbol{\eta} \leftarrow \sigma(W[\mathbf{M}, \mathbf{A}])$\;
+        $\mathbf{\tilde{X}}^{(3)} \leftarrow (1-\boldsymbol{\eta}) \odot \mathbf{\tilde{X}}^{(2)} + \boldsymbol{\eta} \odot \mathbf{\tilde{X}}^{(1)}$\;
+        
+        % Compute Loss
+        $\mathcal{L}_{rec} \leftarrow \text{MAE}(\mathbf{M} \odot \mathbf{\tilde{X}}^{(3)}, \mathbf{M} \odot \mathbf{X}_{high})$\;
+        $\mathcal{L}_{imp} \leftarrow \text{MAE}(\mathbf{M}^h \odot \mathbf{\tilde{X}}^{(3)}, \mathbf{M}^h \odot \mathbf{X}_{high})$\;
+        $\mathcal{L}_{total} \leftarrow \lambda_{rec}\mathcal{L}_{rec} + \lambda_{imp}\mathcal{L}_{imp}$\;
+        
+        Backpropagate and update parameters to minimise $\mathcal{L}_{total}$\;
+    }
+    Evaluate validation MAE; apply early stopping if no improvement for 30 epochs\;
+}
+
+\Return{$\Theta_{SAITS}$}\;
+\end{algorithm}
+
+% --- Integration of Stage 1 and Stage 2 ---
+\paragraph{Stage 1 to Stage 2 Integration.}
+\hspace{2em}The output of Stage 1, consisting of enhanced (imputed) high-resolution sensor data, serves as the direct input to Stage 2. Specifically, the SAITS model takes low-resolution or downsampled sensor data and reconstructs temporally rich, high-resolution sequences. These enhanced sequences are then formatted and segmented as required for the SensorLLM pipeline. This integration ensures that the downstream HAR model receives input data with restored temporal detail, which is critical for accurate activity recognition, especially under aggressive downsampling or missing data scenarios. The imputed data is thus not only a pre-processing step but a crucial enabler for robust LLM-based HAR.
+
+\section{Stage 2: SensorLLM Training for Human Activity Recognition}
+
+\hspace{2em}The second stage of our methodology leverages SensorLLM, a framework designed to align large language models with time-series sensor data for Human Activity Recognition. This stage takes the enhanced, high-resolution data imputed by SAITS and uses it to directly train a powerful, context-aware HAR classifier.
+
+\subsection{SensorLLM Framework}
+\hspace{2em}The SensorLLM architecture is built upon three core components:
 \begin{itemize}
-    \item \textbf{Feature Expansion}: Linear layer expanding encoded features to initial sequence representation
-    \item \textbf{Progressive Upsampling}: Multiple ConvTranspose1D layers with 2x upsampling at each stage
-    \item \textbf{Residual Connections}: Skip connections between upsampling stages for gradient flow
-    \item \textbf{Smoothing Layers}: Additional 1D convolutions for temporal smoothing after each upsampling step
+    \item \textbf{A Pretrained Time-Series (TS) Embedder:} We use a frozen, pretrained Chronos model ($\Phi_{TS}$) as the time-series encoder. It is responsible for extracting rich temporal features from the input sensor data, converting raw time-series signals $\mathbf{X} \in \mathbb{R}^{T \times d}$ into meaningful embeddings $\mathbf{E}_{sensor} \in \mathbb{R}^{L \times d_{TS}}$.
+    \item \textbf{A Pretrained Large Language Model (LLM):} A frozen, large-scale language model, LLaMA-3 ($\Phi_{LLM}$), serves as the reasoning backbone of the framework, processing both textual information and the sensor embeddings.
+    \item \textbf{An Alignment Module:} A lightweight, trainable Multi-Layer Perceptron (MLP), denoted $\Theta_{Align}$, acts as a bridge. It projects the sensor embeddings from the TS embedder's space into the LLM's representation space: $\mathbf{E}_{aligned} = \Theta_{Align}(\mathbf{E}_{sensor})$, where $\mathbf{E}_{aligned} \in \mathbb{R}^{L \times d_{LLM}}$. This is a primary component updated during training.
 \end{itemize}
+By keeping the large TS embedder and LLM frozen, SensorLLM achieves high computational efficiency, with only a small fraction of parameters being trainable.
+
+\subsection{Task-Aware HAR Training and Objective}
+\hspace{2em}The SensorLLM model is trained directly for the HAR task using the enhanced data from Stage 1.
+
+\paragraph{Input Representation.} For a given sensor sample $\mathbf{X}_i$ and a text prompt $Q_i$ (e.g., ``What activity is this?''), the LLM input $\mathbf{E}_{\text{input}}$ is constructed by concatenating the embeddings of the text prompt and the projected sensor data:
+\[
+\mathbf{E}_{\text{input}, i} = [\mathbf{E}_{\text{prompt}, i}, \mathbf{E}_{\text{aligned}, i}] = [\text{Embed}(Q_i), \Theta_{\text{Align}}(\Phi_{\text{TS}}(\mathbf{X}_i))],
+\]
+where $\text{Embed}(\cdot)$ is the LLM's native text embedding layer.
+
+\paragraph{HAR Prediction.} The combined embedding is processed by the LLM to produce a final hidden state, $\mathbf{h}_{\text{last}, i} = \Phi_{\text{LLM}}(\mathbf{E}_{\text{input}, i})$. A trainable linear classifier ($\Theta_{\text{Clf}}$) then maps this state to a probability distribution over the $K$ activity classes:
+\[
+\hat{\mathbf{y}}_i = \text{Softmax}(\Theta_{\text{Clf}}(\mathbf{h}_{\text{last}, i})).
+\]
+
+\paragraph{Training Objective.} To counteract class imbalance, we employ a weighted cross-entropy loss. Let $\mathbf{y}_i$ be the one-hot encoded true label for sample $i$, and $w_k$ be the weight for class $c$. The loss for a single sample is:
+\[
+\mathcal{L}_{\text{HAR}}(\hat{\mathbf{y}}_i, \mathbf{y}_i) = - \sum_{k=1}^{K} w_k y_{ik} \log(\hat{y}_{ik}).
+\]
+The total loss over a mini-batch of size $B$ is $\mathcal{L} = \frac{1}{B}\sum_{i=1}^{B} \mathcal{L}_{\text{HAR}}(\hat{\mathbf{y}}_i, \mathbf{y}_i)$. The weights are typically computed as the inverse of class frequencies. During this phase, the trainable parameters are $\Theta_{\text{Align}}$ and $\Theta_{\text{Clf}}$.
+
+\begin{algorithm}[t]
+\caption{Stage 2 SensorLLM Training for HAR}
+\KwIn{Enhanced dataset $\mathcal{D}_{enhanced}$ from Stage 1, Pretrained TS Embedder $\Phi_{TS}$, Pretrained LLM $\Phi_{LLM}$}
+\KwOut{Trained SensorLLM for HAR: Alignment Module $\Theta_{Align}$ and Classifier $\Theta_{Clf}$}
+
+Initialize Alignment Module $\Theta_{Align}$ and Classifier $\Theta_{Clf}$\;
+\For{each epoch}{
+    \ForEach{mini-batch $(\mathbf{X}, y_{true}) \sim \mathcal{D}_{enhanced}$}{
+        $\mathbf{E}_{sensor} \leftarrow \Phi_{TS}(\mathbf{X})$\;
+        $\mathbf{E}_{aligned} \leftarrow \Theta_{Align}(\mathbf{E}_{sensor})$\;
+        $\mathbf{E}_{input} \leftarrow \textbf{Combine}(\textbf{Embed}(\text{''What activity?''}), \mathbf{E}_{aligned})$\;
+        $\mathbf{h}_{last} \leftarrow \Phi_{LLM}(\mathbf{E}_{input})$\;
+        $\hat{\mathbf{y}} \leftarrow \text{Softmax}(\Theta_{Clf}(\mathbf{h}_{last}))$\;
+        $\mathcal{L}_{HAR} \leftarrow \text{WeightedCrossEntropyLoss}(\hat{\mathbf{y}}, y_{true})$\;
+        Backpropagate and update $\Theta_{Align}$ and $\Theta_{Clf}$\;
+    }
+}
+\Return{$\Theta_{Align}, \Theta_{Clf}$}\;
+\end{algorithm}
 
-\subsubsection{Feature Projector}
-
-\hspace{2em}To enable effective knowledge transfer between teacher and student networks operating in different resolution domains, we introduce a feature projector $P$ that aligns the feature representations:
-
-\begin{equation}
-\mathbf{z}_S^{proj} = P(\mathbf{z}_S; \theta_P)
-\end{equation}
-
-This ensures that student features can be effectively compared with teacher features for knowledge distillation.
-
-\subsection{Enhancement Loss Functions}
-
-\hspace{2em}The training of our teacher-student enhancement model employs a multi-component loss function designed to optimize both reconstruction quality and temporal coherence.
-
-\subsubsection{Reconstruction Loss}
-
-\hspace{2em}The primary reconstruction loss ensures that the enhanced data closely matches the target high-resolution data:
-
-\begin{equation}
-\mathcal{L}_{recon} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{enhanced}_i\|_2^2
-\end{equation}
-
-\subsubsection{Feature Matching Loss}
-
-\hspace{2em}The feature matching loss facilitates knowledge transfer by aligning student and teacher feature representations:
-
-\begin{equation}
-\mathcal{L}_{feature} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{z}_{T,i} - \mathbf{z}_{S,i}^{proj}\|_2^2
-\end{equation}
-
-\subsubsection{Temporal Smoothness Loss}
-
-\hspace{2em}To ensure temporal coherence in the enhanced data, we apply a smoothness constraint:
-
-\begin{equation}
-\mathcal{L}_{smooth} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t=1}^{T_h-1} \|\hat{\mathbf{X}}^{enhanced}_{i,t+1} - \hat{\mathbf{X}}^{enhanced}_{i,t}\|_2^2
-\end{equation}
-
-\subsubsection{Frequency Domain Loss}
-
-\hspace{2em}To preserve important frequency characteristics, we incorporate a frequency domain loss using the Fourier transform:
-
-\begin{equation}
-\mathcal{L}_{freq} = \frac{1}{N} \sum_{i=1}^{N} \|\mathcal{F}(\mathbf{X}^h_i) - \mathcal{F}(\hat{\mathbf{X}}^{enhanced}_i)\|_2^2
-\end{equation}
-
-where $\mathcal{F}$ denotes the Fourier transform operation.
-
-\subsubsection{Combined Loss Function}
-
-\hspace{2em}The total enhancement loss combines all components with appropriate weights:
-
-\begin{equation}
-\mathcal{L}_{enhancement} = \lambda_1 \mathcal{L}_{recon} + \lambda_2 \mathcal{L}_{feature} + \lambda_3 \mathcal{L}_{smooth} + \lambda_4 \mathcal{L}_{freq}
-\end{equation}
-
-where $\lambda_1, \lambda_2, \lambda_3, \lambda_4$ are hyperparameters controlling the relative importance of each loss component.
-
-\subsection{Training Procedure}
-
-\hspace{2em}The training of our enhancement model follows a two-phase approach:
-
-\textbf{Phase 1: Teacher Training} - The teacher network is trained exclusively on high-resolution data using reconstruction loss to learn optimal feature representations.
-
-\textbf{Phase 2: Student Training} - The student network is trained using the combined loss function while the teacher network parameters remain frozen, enabling effective knowledge transfer.
-
-\section{Stage 2: SensorLLM Training on Enhanced Data}
-
-\hspace{2em}The second stage leverages the enhanced sensor data from Stage 1 to train a SensorLLM model for Human Activity Recognition. This stage builds upon the SensorLLM framework \cite{li2024sensorllm} while incorporating our novel data enhancement pipeline.
-
-\subsection{Data Processing Pipeline}
-
-\hspace{2em}The enhanced sensor data undergoes several preprocessing steps to prepare it for SensorLLM training.
-
-\subsubsection{Temporal Segmentation}
-
-\hspace{2em}Enhanced sensor data is segmented into fixed-length windows for activity recognition. Given enhanced data $\hat{\mathbf{X}}^{enhanced}$, we extract overlapping windows:
-
-\begin{equation}
-\mathbf{W}_i = \hat{\mathbf{X}}^{enhanced}[i \cdot s : i \cdot s + w, :]
-\end{equation}
-
-where $w$ is the window size (300 seconds in our implementation), $s$ is the stride, and $i$ indexes the window.
-
-\subsubsection{Label Assignment}
-
-\hspace{2em}For each window, we assign activity labels based on a minimum label fraction criterion. A window is labeled with activity class $c$ if:
-
-\begin{equation}
-\frac{\text{count}(c \text{ in window})}{\text{window length}} \geq \tau
-\end{equation}
-
-where $\tau$ is the minimum label fraction threshold (0.5 in our implementation).
-
-\subsubsection{Data Tokenization}
-
-\hspace{2em}Following the SensorLLM approach, sensor data is converted into discrete tokens suitable for language model processing. We employ the StanNormalizeUniformBins tokenization method:
-
-\begin{equation}
-\text{token}_t = \text{quantize}\left(\frac{\mathbf{x}_t - \mu}{\sigma}, \text{num\_bins}\right)
-\end{equation}
-
-where $\mu$ and $\sigma$ are standardization parameters, and quantize() maps continuous values to discrete bins.
-
-\subsection{Question-Answer Generation}
-
-\hspace{2em}To leverage the natural language capabilities of Large Language Models, we generate question-answer pairs that encode both sensor data and contextual information.
-
-\subsubsection{Statistical Summary Generation}
-
-\hspace{2em}For each sensor window, we compute statistical summaries:
-
-\begin{equation}
-\text{Summary} = \{\mu_x, \sigma_x, \mu_y, \sigma_y, \mu_z, \sigma_z\}
-\end{equation}
-
-where subscripts $x, y, z$ denote the three accelerometer axes.
-
-\subsubsection{Correlation Analysis}
-
-\hspace{2em}Cross-correlation patterns between sensor axes are computed:
-
-\begin{equation}
-\rho_{ij} = \frac{\text{cov}(\mathbf{x}_i, \mathbf{x}_j)}{\sigma_i \sigma_j}
-\end{equation}
-
-These correlations are converted to natural language descriptions (e.g., "strongly positively correlated").
-
-\subsubsection{Trend Analysis}
-
-\hspace{2em}Temporal trends within windows are analyzed using linear regression slopes and converted to descriptive text.
-
-\subsection{SensorLLM Architecture Integration}
-
-\hspace{2em}Our enhanced data is integrated into the SensorLLM architecture, which consists of three main components:
-
-\subsubsection{Time Series Encoder}
-
-\hspace{2em}We utilize the Chronos time series foundation model as the backbone encoder:
-
-\begin{equation}
-\mathbf{h}_{\text{sensor}} = \text{Chronos}(\text{tokens}; \theta_{\text{chronos}})
-\end{equation}
-
-where $\text{tokens}$ represent the tokenized sensor data and $\theta_{\text{chronos}}$ are the pre-trained Chronos parameters.
-
-\subsubsection{Language Model Integration}
-
-\hspace{2em}The sensor embeddings are integrated with the LLaMA-3.2-1B language model:
-
-\begin{equation}
-\mathbf{h}_{\text{combined}} = \text{LLaMA}([\mathbf{h}_{\text{sensor}}; \mathbf{h}_{\text{text}}]; \theta_{\text{llama}})
-\end{equation}
-
-where $\mathbf{h}_{\text{text}}$ represents text embeddings from the question-answer pairs.
-
-\subsubsection{Classification Head}
-
-\hspace{2em}A classification head maps the combined representations to activity classes:
-
-\begin{equation}
-\mathbf{p} = \text{softmax}(\mathbf{W}_{\text{cls}} \mathbf{h}_{\text{combined}} + \mathbf{b}_{\text{cls}})
-\end{equation}
-
-\subsection{Training Configuration}
-
-\hspace{2em}The SensorLLM model is trained using the following configuration optimized for enhanced data:
-
-\begin{itemize}
-    \item \textbf{Loss Function}: Weighted cross-entropy loss to handle class imbalance
-    \item \textbf{Optimization}: AdamW optimizer with cosine learning rate scheduling
-    \item \textbf{Learning Rate}: 2e-3 with 3\% warmup ratio
-    \item \textbf{Batch Size}: 4 per device with gradient accumulation steps of 8
-    \item \textbf{Training Epochs}: 8 epochs with early stopping based on F1-macro score
-    \item \textbf{Model Freezing}: LLM parameters frozen, time series encoder frozen, only classification head trainable
-\end{itemize}
 
 \section{Integration and Evaluation}
 
 \hspace{2em}The integration of our two-stage approach creates a comprehensive pipeline that transforms coarse-grained sensor data into high-quality HAR predictions. The enhanced data from Stage 1 provides the temporal richness necessary for effective Stage 2 training, while the SensorLLM framework in Stage 2 leverages both sensor patterns and contextual understanding for robust activity recognition.
 
 \hspace{2em}This methodology enables HAR systems to achieve high performance even when operating under severe resource constraints, making it particularly suitable for deployment on consumer wearable devices where battery life and computational efficiency are paramount concerns.
-
-\section{Experimental Configuration}
-
-\hspace{2em}Our experimental setup encompasses specific configurations for both stages to ensure reproducible and robust results.
-
-\subsection{Stage 1 Configuration}
-
-\hspace{2em}The teacher-student data enhancement stage operates with the following parameters:
-
-\begin{itemize}
-    \item \textbf{Data Specifications}: 
-    \begin{itemize}
-        \item High-resolution data: 300 timesteps (1Hz sampling, 300 seconds)
-        \item Low-resolution data: 30 timesteps (0.1Hz sampling, 300 seconds) 
-        \item Upsampling factor: 10x (from 30 to 300 timesteps)
-        \item Feature dimension: 3 (tri-axial accelerometer data)
-    \end{itemize}
-    \item \textbf{Model Architecture}:
-    \begin{itemize}
-        \item Teacher hidden dimension: 512
-        \item Student hidden dimension: 256
-        \item Batch size: 16
-        \item Loss weights: $\lambda_1=1.0$, $\lambda_2=0.5$, $\lambda_3=1.0$, $\lambda_4=1.0$
-    \end{itemize}
-    \item \textbf{Training Parameters}:
-    \begin{itemize}
-        \item Teacher training epochs: 30
-        \item Student training epochs: 50
-        \item Learning rate: 1e-3 (both networks)
-        \item Optimizer: Adam
-    \end{itemize}
-\end{itemize}
-
-\subsection{Stage 2 Configuration}
-
-\hspace{2em}The SensorLLM training stage employs the following configuration:
-
-\begin{itemize}
-    \item \textbf{Data Processing}:
-    \begin{itemize}
-        \item Window size: 300 seconds
-        \item Sampling rate: 100Hz (original) downsampled by factors 100DS, 200DS, 500DS, 1000DS
-        \item Minimum label fraction: 0.5
-        \item Data balancing ratio: 0.05
-        \item Stride: 50\% overlap between windows
-    \end{itemize}
-    \item \textbf{Model Configuration}:
-    \begin{itemize}
-        \item Base LLM: LLaMA-3.2-1B Instruct
-        \item Time series encoder: Chronos-T5-Large
-        \item Tokenization: StanNormalizeUniformBins
-        \item Model max length: 4096 tokens
-        \item Number of activity classes: 10 (Capture24 dataset)
-    \end{itemize}
-    \item \textbf{Training Setup}:
-    \begin{itemize}
-        \item Distributed training: 2 GPUs with PyTorch DDP
-        \item Learning rate: 2e-3 with cosine scheduling
-        \item Warmup ratio: 3\%
-        \item Batch size: 4 per device, gradient accumulation: 8
-        \item Training epochs: 8 with early stopping
-        \item Evaluation metric: F1-macro score
-        \item Mixed precision: BF16
-    \end{itemize}
-\end{itemize}
-
-\subsection{Dataset Specifications}
-
-\hspace{2em}Our methodology is evaluated on the Capture24 dataset with the following specifications:
-
-\begin{itemize}
-    \item \textbf{Participants}: 151 participants selected randomly
-    \item \textbf{Train-test split}: 80\% training, 20\% testing
-    \item \textbf{Activity categories}: 10 classes (sleep, sitting, standing, walking, bicycling, vehicle, household-chores, manual-work, sports, mixed-activity)
-    \item \textbf{Data balancing}: Aggressive capping with 0.05 balance ratio to handle class imbalance
-    \item \textbf{Quality control}: Windows with less than 50\% single-label coverage are discarded
-\end{itemize}

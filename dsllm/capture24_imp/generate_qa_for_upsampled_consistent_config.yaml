@@ -5,8 +5,8 @@ baseline_qa_paths:
   test: "{base_output_dir}/stage_2_compare_buffer/300seconds_100DS/test/capture24_test_qa_stage2_cls.json"
   val: "{base_output_dir}/stage_2_compare_buffer/300seconds_100DS/val/capture24_val_qa_stage2_cls.json"
 upsampled_tag: 300seconds_100DS_upsampled_from_1000DS
-upsampled_dir: "{base_output_dir}/stage_2_upsampled_saits/{upsampled_tag}"
+upsampled_dir: "{base_output_dir}/stage_2_upsampled_constraint/{upsampled_tag}"
 splits:
-  # - train
-  # - test 
+  - train
+  - test 
   - val 

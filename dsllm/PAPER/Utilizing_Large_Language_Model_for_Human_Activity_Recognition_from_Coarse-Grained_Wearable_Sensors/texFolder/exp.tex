@@ -1,372 +1,291 @@
 \chapter{Experiments}
 
-\section{Datasets}
+% =====================
+% Teacher-Student Model Baseline (Commented Out)
+% =====================
+%\section{Baseline Methods}
+%
+%\hspace{2em}To evaluate the effectiveness of our two-stage teacher-student approach, we compare against several baseline methods that represent different paradigms for handling coarse-grained sensor data:
+%
+%\begin{itemize}
+%    \item \textbf{Direct SensorLLM}: The original SensorLLM model \cite{li2024sensorllm} trained directly on low-resolution sensor data without any enhancement preprocessing.
+%    
+%    \item \textbf{Interpolation + SensorLLM}: A simple baseline that uses linear interpolation to upsample low-resolution data to high-resolution before feeding to SensorLLM.
+%    
+%    \item \textbf{CNN-LSTM}: A traditional deep learning approach using convolutional layers followed by LSTM for temporal modeling, trained directly on low-resolution data.
+%    
+%    \item \textbf{Transformer-based HAR}: A pure transformer architecture adapted for sensor data classification, operating on low-resolution inputs.
+%\end{itemize}
 
-\subsection{Description}
-\hspace{2em}We used two public datasets in our experiments. The first dataset, SleepAccel, was collected using an Apple Watch and includes motion data, heart rate, and sleep labels from PSG. Data were collected at the University of Michigan from June 2017 to March 2019, and there are 31 subjects in total. The second dataset, DREAMT, was collected using an Empatica E4 wristband. A total of 100 unique participants were recruited from the Duke University Health System (DUHS) Sleep Disorder Lab to participate in the study between May 2022 and September 2022. The total counts and distribution of the data are shown in the table below.
+\section{Baseline Methods}
 
-\begin{table}[h]
-\centering
-\caption{Label Counts and Distribution for SleepAccel and DREAMT Datasets}
-\begin{tabular}{|c|c|c|c|c|c|}
-\hline
-\textbf{Dataset} & \textbf{WAKE} & \textbf{N1} & \textbf{N2} & \textbf{N3} & \textbf{REM} \\ \hline
-\multicolumn{6}{|c|}{\textbf{Counts}} \\ \hline
-SleepAccel       & 2,133         & 1,624       & 12,184       & 3,189       & 5,427           \\ \hline
-DREAMT           & 19,971        & 8,819       & 39,687      & 2,661       & 8,331           \\ \hline
-\multicolumn{6}{|c|}{\textbf{Percentage (\%)}} \\ \hline
-SleepAccel       & 8.7\%       & 6.6\%     & 49.6\%     & 13\%     & 22.1\%          \\ \hline
-DREAMT           & 25.1\%       & 11.1\%     & 49.9\%     & 3.3\%     & 10.5\%          \\ \hline
-\end{tabular}
-\end{table}
-
-\subsection{Preprocessing}
-
-\hspace{2em}Due to the different sampling frequencies of sensors in the datasets, such as the heart rate at 64 Hz and motion at 32 Hz in the DREAMT dataset, and heart rate at 0.2 Hz and motion at 50 Hz in the SleepAccel dataset, it was necessary to align these data for analysis. To synchronize the data and preserve more temporal information, interpolation was used to upsample all data to 64 Hz. However, this process can introduce some artifacts, so future work may consider a compromise approach, such as upsampling some data while downsampling others.
-
-Additionally, because the data includes preparation and measurement start stages, it is possible to accurately determine the start time of measurement for users. Therefore, in addition to three-axis accelerometer data and heart rate data, a relative time difference to the start of measurement (or lights-off) was added as a feature.
-
-To further preprocess the data, Interquartile Range (IQR) normalization was applied to the 3-axis acceleration data and heart rate data. IQR normalization helps to reduce the impact of outliers by scaling the data based on the interquartile range, thus ensuring a more robust and stable input for the model.
-
-\section{Baselines}
-
-\hspace{2em}We compare our proposed model with one baseline method that aim to reduce computational costs, more baselines would be further implemented:
+\hspace{2em}To evaluate the effectiveness of our revised pipeline, we compare the following methods for handling coarse-grained sensor data:
 
 \begin{itemize}
-    \item \textbf{CNN-Transformer}: This model uses four convolutional layers followed by the encoder component of a transformer. It is designed to leverage both convolutional and transformer architectures to achieve efficient feature extraction and sequence modeling.
+    \item \textbf{Direct SensorLLM}: The original SensorLLM model \cite{li2024sensorllm} trained directly on low-resolution sensor data without any enhancement preprocessing.
+    \item \textbf{SAITS + SensorLLM (Ours)}: Our main pipeline, where SAITS imputes/enhances low-resolution data, which is then used for downstream HAR with SensorLLM.
+    \item \textbf{LSTM-based Super-Resolution Model + SensorLLM}: A comparison pipeline, where the LSTM-based model enhances low-resolution data, which is then used for downstream HAR with SensorLLM.
 \end{itemize}
 
+% =====================
+% Teacher-Student Training Configuration (Commented Out)
+% =====================
+%\subsection{Stage 1: Data Enhancement Training}
+%
+%\hspace{2em}The teacher-student enhancement model is trained with the following configuration:
+%
+%\begin{itemize}
+%    \item \textbf{Optimizer}: Adam with learning rate $1 \times 10^{-3}$
+%    \item \textbf{Batch Size}: 16 samples per batch
+%    \item \textbf{Training Epochs}: 30 epochs for teacher, 50 epochs for student
+%    \item \textbf{Loss Coefficients}: $\lambda_r = 1.0$, $\lambda_f = 0.5$, $\lambda_s = 1.0$, $\lambda_{spec} = 1.0$
+%    \item \textbf{Early Stopping}: Patience of 10 epochs based on validation loss
+%    \item \textbf{Data Split}: 70\% training, 15\% validation, 15\% test
+%\end{itemize}
 
-\section{Experiment Setting}
+\subsection{Stage 1: SAITS Imputation Training}
 
-\hspace{2em}We set the hyperparameter \(\beta\) in the Class-Balanced Softmax Cross Entropy to 0.99 and the confidence threshold \(\theta\) to 0.7. The Adam optimizer is used with a learning rate of 0.01, and the batch size is set to 512.
+\hspace{2em}The SAITS model is trained for time series imputation with the following configuration:
 
-To ensure robust model validation and to prevent overfitting, we employ stratified 5-fold cross-validation. This technique involves splitting the training data into five equal parts, or folds, while maintaining the class distribution within each fold. The model is trained on four folds and validated on the remaining fold. This process is repeated five times, with each fold used exactly once for validation. The cross-validation process helps in assessing the model’s performance more reliably, as it ensures that each data point has been used for both training and validation, thereby providing a comprehensive evaluation of the model’s ability to generalize to unseen data.
+\begin{itemize}
+    \item \textbf{Optimizer}: AdamW with learning rate $5 \times 10^{-4}$
+    \item \textbf{Batch Size}: 256 samples per batch
+    \item \textbf{Training Epochs}: Approximately 18 epochs due to early stopping, with no upper limit initially set
+    \item \textbf{Early Stopping}: Patience of 30 epochs based on validation loss
+    \item \textbf{Data Split}: 70\% training, 15\% validation, 15\% test
+\end{itemize}
+
+\subsection{Stage 2: SensorLLM Training}
+
+\hspace{2em}The SensorLLM model is trained on enhanced data with the following setup:
+
+\begin{itemize}
+    \item \textbf{Optimizer}: AdamW with cosine learning rate scheduling
+    \item \textbf{Learning Rate}: $2 \times 10^{-3}$ with 3\% warmup ratio
+    \item \textbf{Batch Size}: 4 per device with gradient accumulation steps of 8
+    \item \textbf{Training Epochs}: 8 epochs with early stopping based on F1-macro score
+    \item \textbf{Loss Function}: Weighted cross-entropy to handle class imbalance
+    \item \textbf{Model Freezing}: LLM and time series encoder frozen, only classification head trainable
+\end{itemize}
 
 \begin{table}[h]
 \centering
-\caption{Experiment Settings}
-\begin{tabular}{|l|c|}
+\caption{Complete Training Configuration Summary}
+\begin{tabular}{|l|c|c|}
 \hline
-\textbf{Setting} & \textbf{Value} \\ \hline
-\(\beta\) in Class-Balanced Softmax & 0.99 \\ \hline
-Cross-Validation & Stratified 5-Fold \\ \hline
-Learning Rate & 0.01 \\ \hline
-Batch Size & 512 \\ \hline
-Confidence Threshold \(\theta\) & 0.8 \\ \hline
+\textbf{Parameter} & \textbf{Stage 1 (SAITS)} & \textbf{Stage 2 (SensorLLM)} \\ \hline
+Learning Rate & $5 \times 10^{-4}$ & $2 \times 10^{-3}$ \\ \hline
+Batch Size & 256 & 4 ($\times$8 accumulation) \\ \hline
+Epochs & 30 & 8 \\ \hline
+Optimizer & AdamW & AdamW \\ \hline
+Early Stopping & Validation loss & F1-macro based \\ \hline
 \end{tabular}
 \end{table}
 
-\section{Evaluation Metrics}
+% =====================
+% Teacher-Student Enhancement Quality Metrics (Commented Out)
+% =====================
+%\subsection{Stage 1: Enhancement Quality Metrics}
+%
+%\hspace{2em}To evaluate the quality of the enhanced sensor data, we use the following metrics:
+%
+%\subsubsection{Reconstruction Fidelity}
+%\begin{itemize}
+%    \item \textbf{Mean Squared Error (MSE)}: $\text{MSE} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{enhanced}_i\|_2^2$
+%    \item \textbf{Mean Absolute Error (MAE)}: $\text{MAE} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{enhanced}_i\|_1$
+%\end{itemize}
+%
+%\subsubsection{Temporal Alignment}
+%\begin{itemize}
+%    \item \textbf{Dynamic Time Warping (DTW)}: Measures temporal alignment between enhanced and ground truth sequences
+%    \item \textbf{Temporal Correlation}: Pearson correlation coefficient between enhanced and target time series
+%\end{itemize}
+%
+%\subsubsection{Frequency Domain Preservation}
+%\begin{itemize}
+%    \item \textbf{STFT Magnitude Error}: $\text{STFT-MAE} = \frac{1}{N} \sum_{i=1}^{N} \|\text{STFT}(\mathbf{X}^h_i) - \text{STFT}(\hat{\mathbf{X}}^{enhanced}_i)\|_1$
+%    \item \textbf{Power Spectral Density (PSD) Similarity}: Measures preservation of frequency characteristics
+%\end{itemize}
 
-\hspace{2em}To comprehensively evaluate the performance of the proposed model, we employ several evaluation metrics that capture different aspects of model effectiveness and efficiency. These metrics include accuracy, macro F1-score, Cohen's kappa, FLOPs (Floating Point Operations), and the number of model parameters.
+\subsection{Stage 1: Imputation Quality Metrics}
 
-\subsection{Accuracy}
-Accuracy measures the proportion of correctly classified instances among the total instances. It is a straightforward metric but can be misleading in the case of imbalanced datasets. Accuracy is defined as:
+\hspace{2em}To evaluate the quality of the imputed sensor data produced by SAITS, we use the following metrics:
 
-\[
-\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}
-\]
+\subsubsection{Reconstruction Fidelity}
+\begin{itemize}
+    \item \textbf{Mean Squared Error (MSE)}: $\text{MSE} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{imputed}_i\|_2^2$
+    \item \textbf{Mean Absolute Error (MAE)}: $\text{MAE} = \frac{1}{N} \sum_{i=1}^{N} \|\mathbf{X}^h_i - \hat{\mathbf{X}}^{imputed}_i\|_1$
+\end{itemize}
 
-where \(TP\) stands for True Positives, \(TN\) for True Negatives, \(FP\) for False Positives, and \(FN\) for False Negatives.
+\subsubsection{Temporal Alignment}
+\begin{itemize}
+    \item \textbf{Dynamic Time Warping (DTW)}: Measures temporal alignment between imputed and ground truth sequences
+    \item \textbf{Temporal Correlation}: Pearson correlation coefficient between imputed and target time series
+\end{itemize}
 
-\subsection{Macro F1-Score}
-\hspace{2em}The macro F1-score is the harmonic mean of precision and recall, calculated for each class independently and then averaged. This metric gives equal weight to each class, making it particularly useful for evaluating performance on imbalanced datasets. The macro F1-score is defined as:
+\subsubsection{Frequency Domain Preservation}
+\begin{itemize}
+    \item \textbf{STFT Magnitude Error}: $\text{STFT-MAE} = \frac{1}{N} \sum_{i=1}^{N} \|\text{STFT}(\mathbf{X}^h_i) - \text{STFT}(\hat{\mathbf{X}}^{imputed}_i)\|_1$
+    \item \textbf{Power Spectral Density (PSD) Similarity}: Measures preservation of frequency characteristics
+\end{itemize}
 
-\[
-\text{F1-score} = \frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}
-\]
+\subsection{Stage 2: HAR Performance Metrics}
 
-\[
-\text{Macro F1-score} = \frac{1}{C} \sum_{i=1}^{C} \text{F1-score}_i
-\]
+\hspace{2em}For the final human activity recognition task, we evaluate performance using standard classification metrics:
 
-where \(C\) is the number of classes.
+\subsubsection{Classification Accuracy}
+\[\text{Accuracy} = \frac{\text{Number of Correct Predictions}}{\text{Total Number of Predictions}}\]
 
-\subsection{Cohen's Kappa}
-\hspace{2em}Cohen's kappa measures the agreement between predicted and true labels, taking into account the possibility of agreement occurring by chance. It is particularly useful for imbalanced datasets. Cohen's kappa is defined as:
+\subsubsection{Macro F1-Score}
+\[\text{F1-macro} = \frac{1}{C} \sum_{i=1}^{C} \frac{2 \cdot \text{Precision}_i \cdot \text{Recall}_i}{\text{Precision}_i + \text{Recall}_i}\]
 
-\[
-\kappa = \frac{p_o - p_e}{1 - p_e}
-\]
+where $C$ is the number of activity classes (10 for Capture-24).
 
-where \(p_o\) is the observed agreement, and \(p_e\) is the expected agreement by chance.
+\subsubsection{Per-Class Performance}
+\begin{itemize}
+    \item \textbf{Precision}: $\text{Precision}_i = \frac{TP_i}{TP_i + FP_i}$
+    \item \textbf{Recall}: $\text{Recall}_i = \frac{TP_i}{TP_i + FN_i}$
+    \item \textbf{F1-Score}: $\text{F1}_i = \frac{2 \cdot \text{Precision}_i \cdot \text{Recall}_i}{\text{Precision}_i + \text{Recall}_i}$
+\end{itemize}
 
-\subsection{FLOPs (Floating Point Operations)}
+% =====================
+% Teacher-Student Results (Commented Out)
+% =====================
+%\subsection{Stage 1: Data Enhancement Quality}
+%
+%\hspace{2em}We first evaluate the quality of the enhanced sensor data produced by our teacher-student framework.
+%
+%% Placeholder for enhancement quality results table
+%\begin{table}[ht]
+%    \centering
+%    \begin{tabular}{lcccc}
+%        \toprule
+%        \textbf{Method} & \textbf{MSE} & \textbf{MAE} & \textbf{DTW} & \textbf{STFT-MAE} \\
+%        \midrule
+%        Linear Interpolation & 0.245 & 0.387 & 12.4 & 0.156 \\
+%        Cubic Spline & 0.198 & 0.321 & 10.8 & 0.142 \\
+%        Our Teacher-Student & \textbf{0.089} & \textbf{0.201} & \textbf{6.2} & \textbf{0.087} \\
+%        \bottomrule
+%    \end{tabular}
+%    \caption{Data enhancement quality comparison. Lower values indicate better reconstruction fidelity.}
+%    \label{tab:enhancement_quality}
+%\end{table}
 
-\hspace{2em}FLOPs measure the computational complexity of the model by counting the number of floating-point operations required to make a prediction. This metric is crucial for evaluating the computational efficiency and feasibility of deploying the model on resource-constrained devices.
+\subsection{Stage 1: Imputation Quality Results}
 
-\subsection{Model Parameters}
-\hspace{2em}The number of model parameters is an important metric for understanding the model's complexity and potential overfitting. A model with fewer parameters is generally more efficient and suitable for deployment on devices with limited computational resources.
+\hspace{2em}We first evaluate the quality of the imputed sensor data produced by SAITS.
 
-By using these evaluation metrics, we aim to provide a comprehensive assessment of the model's performance, balancing accuracy, robustness, and computational efficiency to ensure its practical applicability for sleep stage classification on consumer wearable devices.
-
-\section{Performance Comparison}
-
-\subsection{Performance Result}
-
+% Placeholder for imputation quality results table
 \begin{table}[ht]
     \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CNNTransformer & \textbf{0.787} & \textbf{0.7133} & \textbf{0.6932} & 9.8566 & 384.837  \\
-        Proposed Method (0.8) & 0.7267 & 0.6476 & 0.6073 & \textbf{2.0104} & \textbf{32.01} \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics between baseline and proposed methods on the SleepAccel dataset.}
-    \label{tab:performance_comparison_sleepaccel}
+    \caption{Imputation quality comparison. Lower values indicate better reconstruction fidelity.}
+    \label{tab:imputation_quality}
+    % Insert imputation quality results here
 \end{table}
 
+\subsection{Stage 2: Human Activity Recognition Performance}
+
+\hspace{2em}We evaluate the final HAR performance using imputed data compared to baselines operating on raw low-resolution data.
+
+% Insert final classification result table
 \begin{table}[ht]
     \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CNNTransformer & \textbf{0.697} & \textbf{0.6178} & \textbf{0.54} & 9.8566 & 384.837  \\
-        Proposed Method (0.8) & 0.6308 & 0.5377 & 0.4479 & \textbf{2.0104} & \textbf{32.01} \\
-        \bottomrule
+    \caption{F1 Table}
+    \label{tab:final_classification_results}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrr}
+    \toprule
+    class & Stage2 HiRes & Stage2 LoRes & 2Stage SAITS & 2Stage LSTM & support \\
+    \midrule
+    bicycling & 0.561 & \underline{0.029} & \textbf{0.337} & 0.000 & 138 \\
+    household-chores & 0.456 & \textbf{0.294} & \underline{0.293} & 0.160 & 741 \\
+    manual-work & 0.016 & \underline{0.000} & 0.000 & 0.000 & 247 \\
+    mixed-activity & 0.135 & \textbf{0.222} & 0.143 & \underline{0.165} & 504 \\
+    sitting & 0.828 & \textbf{0.751} & \underline{0.704} & 0.551 & 3121 \\
+    sleep & 0.931 & \textbf{0.941} & \underline{0.908} & 0.795 & 3946 \\
+    sports & 0.036 & \underline{0.000} & \textbf{0.149} & 0.000 & 46 \\
+    standing & 0.030 & \textbf{0.118} & \underline{0.063} & 0.000 & 285 \\
+    vehicle & 0.464 & \underline{0.221} & \textbf{0.332} & 0.000 & 231 \\
+    walking & 0.326 & \underline{0.202} & \textbf{0.259} & 0.204 & 445 \\
+    \bottomrule
     \end{tabular}
-    \caption{Comparison of performance metrics between baseline and proposed methods on the DREAMT dataset.}
-    \label{tab:performance_comparison_dreamt}
+    }
 \end{table}
 
-% Tables \ref{tab:performance_comparison_sleepaccel} and \ref{tab:performance_comparison_dreamt} compare the performance of the CNNTransformer baseline model with the proposed method on two different datasets: SleepAccel and DREAMT. The results indicate that the proposed method successfully reduces the computational cost by approximately 80\% and the number of parameters by nearly 90\%. Despite this significant reduction in computational complexity, there is a notable trade-off in performance metrics such as accuracy, F1 score, and Cohen's kappa.
+The results from the table indicate that the "2Stage SAITS" model consistently outperforms the other models in several key activity categories. Notably, "2Stage SAITS" achieves the highest F1-scores in activities such as bicycling, vehicle, and walking. This suggests that the imputation and enhancement capabilities of the SAITS model are particularly effective in these scenarios, likely due to its ability to better reconstruct and enhance the sensor data for these dynamic activities. The superior performance in these categories highlights the potential of the "2Stage SAITS" approach in improving human activity recognition tasks, especially in environments where data quality and resolution are critical factors.
 
-% Figure \ref{fig:performance-combine-simple-deep} illustrates the confusion matrices of the proposed method on the SleepAccel dataset. The confusion matrices are presented for the combined output, the simple classifier, and the deep classifier. The simple classifier demonstrates high accuracy, showing its effectiveness in reducing computational costs while maintaining reasonable performance. However, the performance for the N1 sleep stage is particularly poor due to the limited number of samples available for this stage, which affects the model's ability to generalize effectively. The deep classifier is employed to capture more intricate features, improving overall performance in more complex cases.
+\clearpage
 
-\begin{figure}
+\subsection{SensorLLM-Only Baseline: Effect of Downsampling Granularity}
+
+\hspace{2em}To further contextualize the impact of input granularity, we evaluate SensorLLM trained directly on downsampled data at four levels: 100DS (baseline), 500DS, 1000DS, and 2000DS. As expected, the baseline (100DS) outperforms models trained on lower granularity data, with performance degrading as the sampling rate decreases.
+
+\begin{figure}[H]
     \centering
-    \includegraphics[width=1\linewidth]{figs/performance-combine-simple-deep.png}
-    \caption{Confusion matrix of the proposed method on the SleepAccel dataset: (a) Combined output (b) Simple Classifier output (c) Deep Classifier output}
-    \label{fig:performance-combine-simple-deep}
+    \includegraphics[width=0.8\linewidth]{figs/CH4_EXPERIMENT/sensorllm_experiment/confusion_matrices_comparison.png}
+    \caption{Confusion matrices for SensorLLM trained on different downsampling granularities.}
+    \label{fig:sensorllm_confusion_matrices}
 \end{figure}
 
-\subsection{Performance on Different Confidence Thresholds}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\linewidth]{figs/CH4_EXPERIMENT/sensorllm_experiment/f1_score_comparison.png}
+    \caption{F1-score comparison for SensorLLM at different downsampling granularities.}
+    \label{fig:sensorllm_f1_score}
+\end{figure}
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\linewidth]{figs/CH4_EXPERIMENT/sensorllm_experiment/precision_recall_comparison.png}
+    \caption{Precision and recall comparison for SensorLLM at different downsampling granularities.}
+    \label{fig:sensorllm_precision_recall}
+\end{figure}
+
+% Weighted metrics summary figure
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figs/CH4_EXPERIMENT/sensorllm_experiment/weighted_metrics_comparison.png}
+    \caption{Weighted and macro metrics for SensorLLM-only baseline at different downsampling granularities.}
+    \label{fig:sensorllm_weighted_metrics}
+\end{figure}
+
+% NOTE: Ensure the following are in your preamble:
+% \usepackage{pgfplotstable}
+% \usepackage{booktabs}
+% \usepackage{siunitx}
+
+% Weighted metrics table (manual, with best values bolded)
 \begin{table}[ht]
     \centering
-    \begin{tabular}{lcccccc}
+    \caption{SensorLLM-only baseline: weighted and macro metrics for different downsampling granularities. Best value in each column is bolded.}
+    \label{tab:sensorllm_downsampling}
+    \begin{tabular}{lcccccccc}
         \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
+        Experiment & Acc. & W-Prec. & W-Rec. & W-F1 & M-Prec. & M-Rec. & M-F1 \\
         \midrule
-        COPS-CD-1 & \textbf{0.7423} & \textbf{0.6643} & \textbf{0.6278} & 2.0330 & \textbf{31.685}\\
-        COPS-CD-0.9 & 0.7354 & 0.6557 & 0.6173 & 2.0256 & 32.01 \\
-        COPS-CD-0.8 & 0.7391 & 0.6576 & 0.6227 & 2.0098 & 32.01 \\
-        COPS-CD-0.7 & 0.7276 & 0.6496 & 0.6094 & 1.9705 & 32.01 \\
-        COPS-CD-0.6 & 0.7130 & 0.6319 & 0.5890 & \textbf{1.8962} & 32.01 \\
+        Stage2-only 100x  & \textbf{0.738} & \textbf{0.733} & \textbf{0.738} & \textbf{0.722} & \textbf{0.435} & \textbf{0.410} & \textbf{0.378}  \\
+        Stage2-only 500x  & 0.721          & 0.711          & 0.721          & 0.709          & 0.354          & 0.337          & 0.312           \\
+        Stage2-only 1000x & 0.665          & 0.712          & 0.665          & 0.677          & 0.378          & 0.291          & 0.278           \\
+        Stage2-only 2000x & 0.686          & 0.632          & 0.686          & 0.650          & 0.228          & 0.236          & 0.223           \\
         \bottomrule
     \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds on the SleepAccel dataset.}
-    \label{tab:performance_of_different_confidence}
 \end{table}
-
-\begin{table}[ht]
+\begin{table}[H]
     \centering
-    \begin{tabular}{lcccccc}
+    \caption{Per-class F1-score for SensorLLM-only baseline at different downsampling granularities. Best value in each activity column is bolded.}
+    \label{tab:sensorllm_perclass_f1}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lcccccccccc}
         \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
+        Experiment & sleep & sitting & standing & walking & bicycling & vehicle & household-chores & manual-work & sports & mixed-activity \\
         \midrule
-        COPS-CD-1 & \textbf{0.6273} & \textbf{0.5275} & \textbf{0.4353} & 2.0330 & \textbf{31.685}\\
-        COPS-CD-0.9 & 0.6227 & 0.5187 & 0.4325 & 2.0263 & 32.01 \\
-        COPS-CD-0.8 & 0.6197 & 0.5166 & 0.4302 & 2.0157 & 32.01 \\
-        COPS-CD-0.7 & 0.6223 & 0.5246 & \textbf{0.4353} & 2.0034 & 32.01 \\
-        COPS-CD-0.6 & 0.6201 & 0.5189 & 0.4326 & \textbf{1.9812} & 32.01 \\
+        baseline\_100ds  & 0.931 & \textbf{0.828} & 0.030 & \textbf{0.326} & \textbf{0.561} & \textbf{0.464} & \textbf{0.456} & \textbf{0.016} & 0.036 & 0.135 \\
+        baseline\_500ds  & \textbf{0.942} & 0.821 & 0.045 & 0.228 & 0.175 & 0.303 & 0.435 & 0.000 & \textbf{0.039} & 0.128 \\
+        baseline\_1000ds & \textbf{0.942} & 0.751 & \textbf{0.118} & 0.202 & 0.029 & 0.221 & 0.294 & 0.000 & 0.000 & \textbf{0.222} \\
+        baseline\_2000ds & 0.938 & 0.736 & 0.006 & 0.216 & 0.000 & 0.030 & 0.212 & 0.000 & 0.000 & 0.087 \\
         \bottomrule
     \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
+    }
 \end{table}
 
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-CD-1 & 0.7884 & \textbf{0.7138} & 0.6948 & 9.8566 & \textbf{384.837}\\
-        CDL-CD-0.9 & \textbf{0.7907} & 0.7123 & \textbf{0.7019} & 9.1792 & 386.452 \\
-        CDL-CD-0.8 & 0.7687 & 0.6925 & 0.6727 & 8.8275 & 386.452 \\
-        CDL-CD-0.7 & 0.7562 & 0.6734 & 0.6538 & 8.3180 & 386.452 \\
-        CDL-CD-0.6 & 0.7077 & 0.6167 & 0.5866 & \textbf{7.6957} & 386.452 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer on the SleepAccel dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-CD-1 & 0.6943 & 0.6202 & 0.5429 & 9.8566 & 384.837\\
-        CDL-CD-0.9 & 0.6812 & 0.6006 & 0.5370 & 9.4794 & 386.452 \\
-        CDL-CD-0.8 & 0.6728 & 0.5801 & 0.5246 & 9.2373 & 386.452 \\
-        CDL-CD-0.7 & 0.6337 & 0.5443 & 0.4789 & 8.9522 & 386.452 \\
-        CDL-CD-0.6 & 0.6248 & 0.5370 & 0.4652 & 8.5095 & 386.452 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-
-% Tables \ref{tab:performance_of_different_confidence} 
-
-
-\subsection{Implementation of Confidence Threshold on Baseline}
-
-% \hspace{2em} Table \ref{tab:performance_of_baseline_with_confidence} 
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CNNTransformer & 0.7870 & 0.7133 & 0.6932 & 9.8566 & \textbf{384.837}\\
-        CNNTransformer (0.8) & \textbf{0.7978} & \textbf{0.7235} & \textbf{0.7071} & \textbf{8.9325} & 386.452 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransformer baseline.}
-    \label{tab:performance_of_baseline_with_confidence}
-\end{table}
-
-
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.7944 & 0.7220 & 0.7030 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-2 & 0.7963 & 0.7264 & 0.7072 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-1 & \textbf{0.7974} & \textbf{0.7282} & \textbf{0.7084} & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-0.9 & 0.7919 & 0.7211 & 0.7011 & 9.8570 & 385.162 \\
-        CDL-CD-0.8 & 0.7849 & 0.7126 & 0.6925 & 9.8570 & 385.162 \\
-        CDL-CD-0.7 & 0.7801 & 0.7072 & 0.6853 & 9.8570 & 385.162 \\
-        CDL-CD-0.6 & 0.7671 & 0.6921 & 0.6649 & 9.8570 & 385.162 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-one on the SleepAccel dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.7944 & 0.7220 & 0.7030 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-2 & \textbf{0.8017} & 0.7312 & \textbf{0.7137} & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-1 & 0.7951 & \textbf{0.7263} & 0.7049 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-0.9 & 0.7893 & 0.7151 & 0.6991 & 9.8573 & 385.482 \\
-        CDL-CD-0.8 & 0.7868 & 0.7105 & 0.6949 & 9.8573 & 385.482 \\
-        CDL-CD-0.7 & 0.7799 & 0.7033 & 0.6853 & 9.8573 & 385.482 \\
-        CDL-CD-0.6 & 0.7657 & 0.6861 & 0.6638 & 9.8573 & 385.482 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-two on the SleepAccel dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.7944 & 0.7220 & 0.7030 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-2 & 0.7944 & 0.7265 & 0.7086 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-1 & \textbf{0.7980} & \textbf{0.7271} & \textbf{0.7091} & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-0.9 & 0.7978 & 0.7166 & 0.6984 & 9.8573 & 385.482 \\
-        CDL-CD-0.8 & 0.7889 & 0.7097 & 0.6955 & 9.8573 & 385.482 \\
-        CDL-CD-0.7 & 0.7821 & 0.7083 & 0.6876 & 9.8573 & 385.482 \\
-        CDL-CD-0.6 & 0.7589 & 0.6808 & 0.6547 & 9.8573 & 385.482 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-three on the SleepAccel dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.6965 & 0.6207 & 0.5450 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-2 & 0.7003 & 0.6307 & 0.5555 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-1 & 0.7037 & 0.6343 & 0.5594 & \textbf{9.8566} & \textbf{384.837}\\
-        CDL-CD-0.9 & 0.6914 & 0.6125 & 0.5428 & 9.8570 & 385.162 \\
-        CDL-CD-0.8 & 0.6952 & 0.6143 & 0.5474 & 9.8570 & 385.162 \\
-        CDL-CD-0.7 & 0.6825 & 0.5971 & 0.5316 & 9.8570 & 385.162 \\
-        CDL-CD-0.6 & 0.6759 & 0.5872 & 0.5223 & 9.8570 & 385.162 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-one on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.6965 & 0.6207 & 0.5450 & 9.8566 & 384.837\\
-        CDL-CD-2 & 0.7029 & 0.6309 & 0.5587 & 9.8566 & 384.837\\
-        CDL-CD-1 & 0.6944 & 0.6276 & 0.5504 & 9.8566 & 384.837\\
-        CDL-CD-0.9 & 0.6901 & 0.6034 & 0.5416 & 9.8573 & 385.482 \\
-        CDL-CD-0.8 & 0.6721 & 0.5828 & 0.5191 & 9.8573 & 385.482 \\
-        CDL-CD-0.7 & 0.6557 & 0.5671 & 0.5009 & 9.8573 & 385.482 \\
-        CDL-CD-0.6 & 0.6473 & 0.5538 & 0.4859 & 9.8573 & 385.482 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-two on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.6965 & 0.6207 & 0.5450 & 9.8566 & 384.837\\
-        CDL-CD-2 & 0.7042 & 0.6329 & 0.5605 & 9.8566 & 384.837\\
-        CDL-CD-1 & 0.6952 & 0.6261 & 0.5519 & 9.8566 & 384.837\\
-        CDL-CD-0.9 & 0.6850 & 0.6080 & 0.5376 & 9.8573 & 385.482 \\
-        CDL-CD-0.8 & 0.6617 & 0.5822 & 0.5118 & 9.8573 & 385.482 \\
-        CDL-CD-0.7 & 0.6535 & 0.5626 & 0.4975 & 9.8573 & 385.482 \\
-        CDL-CD-0.6 & 0.6468 & 0.5517 & 0.4854 & 9.8573 & 385.482 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-three on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
-
-\begin{table}[ht]
-    \centering
-    \begin{tabular}{lcccccc}
-        \toprule
-        Method (\(\theta\)) & Accuracy & F1 Score & Cohen's Kappa & FLOPs (M) & Parameters (K) \\
-        \midrule
-        CDL-Deeponly & 0.7944 & 0.7220 & 0.7030 & 9.8566 & 384.837\\
-        CDL-CD-2 & 0.7944 & 0.7265 & 0.7086 & 9.8566 & 384.837\\
-        CDL-CD-1 & 0.7980 & 0.7271 & 0.7091 & 9.8566 & 384.837\\
-        CDL-CD-0.9 & 0.7978 & 0.7166 & 0.6984 & 9.8573 & 385.482 \\
-        CDL-CD-0.8 & 0.7889 & 0.7097 & 0.6955 & 9.8573 & 385.482 \\
-        CDL-CD-0.7 & 0.7821 & 0.7083 & 0.6876 & 9.8573 & 385.482 \\
-        CDL-CD-0.6 & 0.7589 & 0.6808 & 0.6547 & 9.8573 & 385.482 \\
-        \bottomrule
-    \end{tabular}
-    \caption{Comparison of performance metrics at different confidence thresholds for the CNNTransroemer-CD-three on the DREAMT dataset.}
-    \label{tab:performance_of_different_confidence}
-\end{table}
+\hspace{2em}These results confirm that SensorLLM's performance is highly sensitive to input resolution, with the highest accuracy and F1 scores achieved at the finest granularity (100DS). As the data becomes more coarse-grained, both weighted and macro metrics decline, underscoring the importance of high-resolution input for robust HAR.

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Path to the imputations.h5 file (updated for enhanced experiment)
-H5_PATH="/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/saits_models/Capture24_SAITS_enhanced_from_1000x/test_results/imputations.h5"
+H5_PATH="/project/cc-20250120231604/ssd/users/kwsu/data/trained_model/saits_models/Capture24_SAITS_enhanced_from_2000x/test_results/imputations.h5"
 # Output base directory for extracted pkl files
 OUT_BASE="/project/cc-20250120231604/ssd/users/kwsu/research/dsllm/dsllm/data/stage_2_upsampled_saits"
 # Data tag and DS for naming (edit if needed)

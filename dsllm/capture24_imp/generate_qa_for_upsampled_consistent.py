@@ -92,9 +92,9 @@ def process_upsampled_split_consistent(split):
     base_output_path = os.path.join(upsampled_dir, split)
     data_file = os.path.join(base_output_path, f"capture24_{split}_data_stage2_{upsampled_tag}.pkl")
     labels_file = os.path.join(base_output_path, f"capture24_{split}_labels_stage2_{upsampled_tag}.pkl")
-    # If upsampled_tag contains '_upsampled_from_', use a dynamic suffix ending with _upsampled.pkl
+    # If upsampled_tag contains '_upsampled_from_', use a dynamic suffix ending with _constrained_upsampled.pkl
     if '_upsampled_from_' in upsampled_tag:
-        base_tag = re.sub(r'_upsampled_from_.*DS$', '_upsampled', upsampled_tag)
+        base_tag = re.sub(r'_upsampled_from_.*DS$', '_constrained_upsampled', upsampled_tag)
         data_file = os.path.join(base_output_path, f"capture24_{split}_data_stage2_{base_tag}.pkl")
         labels_file = os.path.join(base_output_path, f"capture24_{split}_labels_stage2_{base_tag}.pkl")
     # Load the correct baseline QA file for this split

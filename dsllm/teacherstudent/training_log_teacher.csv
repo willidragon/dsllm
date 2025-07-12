@@ -1,2 +1,2 @@
-epoch,total_loss,best_loss_so_far,epochs_since_improvement,early_stopped
-1,0.2931096058537942,inf,0,0
+epoch,train_loss,val_loss
+43,0.16895600892119594,0.166152012084075

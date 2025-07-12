@@ -21,3 +21,127 @@ logs/
 *.png
 
 dsllm/teacherstudent/evaluation/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Additional exclusions for research/ML projects
+# Data files
+*.csv
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# Model files
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.model
+
+# Generated documents and outputs
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Results and outputs
+results/
+outputs/
+checkpoints/
+models/
+saved_models/
+runs/
+wandb/
+
+# Large files and datasets
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Environment files
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch Lightning
+lightning_logs/
+lightning_logs/
+
+# TensorBoard
+runs/
+tensorboard_logs/
+
+# MLflow
+mlruns/
+
+# Weights & Biases
+wandb/
+
+# Paperspace
+.paperspace/
+
+# Specific to this project
+dsllm/teacherstudent/evaluation/
+dsllm/PAPER/paper_related_code/results/
+dsllm/PAPER/paper_related_code/model_classification_results/
+dsllm/PAPER/paper_related_code/model_classification_results_all/
